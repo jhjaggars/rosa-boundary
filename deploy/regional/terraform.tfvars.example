@@ -1,0 +1,30 @@
+# ROSA Boundary Terraform Configuration
+# Copy this file to terraform.tfvars and update with your values
+
+project         = "rosa-boundary"
+stage           = "dev"
+retention_days  = 90  # S3 WORM compliance retention period in days
+container_image = "YOUR_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/rosa-boundary:latest"
+
+# Fargate task sizing
+# CPU/Memory combinations: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-cpu-memory-error.html
+container_cpu    = 512   # Options: 256, 512, 1024, 2048, 4096
+container_memory = 1024  # Must be compatible with CPU selection
+
+# Network configuration
+# Update with your VPC and subnet IDs
+vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"
+subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",  # Must be in different AZs for HA
+  "subnet-yyyyyyyyyyyyyyyyy"
+]
+
+# CloudWatch log retention
+log_retention_days = 7  # Options: 1, 3, 5, 7, 14, 30, 60, 90, etc.
+
+# Resource tags
+tags = {
+  Owner       = "SRE Team"
+  Environment = "dev"
+  CostCenter  = "12345"
+}

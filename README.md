@@ -206,30 +206,56 @@ podman run --rm rosa-boundary:latest sh -c "aws --version && oc version --client
 
 ### Fargate Deployment
 
-This container is designed to run as an AWS Fargate task with ECS Exec for remote access:
+This container is designed to run as an AWS Fargate task with ECS Exec for remote access.
 
-1. Push to your container registry
-2. Create Fargate task definition using this image (platform version 1.4.0+)
-3. Configure EFS volume mount for `/home/sre` (recommended for persistent storage)
-4. Set environment variables in task definition:
-   - `OC_VERSION` and/or `AWS_CLI` if you need specific versions
-   - `S3_AUDIT_ESCROW` for automatic backup on container termination (e.g., `s3://bucket/incident-123/`)
-   - `AWS_REGION` to override auto-detected region for Bedrock (optional)
-5. Enable ECS Exec on the task definition
-6. Configure IAM task role permissions:
-   - SSM permissions for ECS Exec
-   - S3 write permissions if using `S3_AUDIT_ESCROW`
-   - **Bedrock permissions** for Claude Code (see Claude Code section above)
-7. Connect via `aws ecs execute-command --user sre` to connect as the sre user
+#### Automated Deployment (Recommended)
 
-The container runs `sleep infinity` by default. The entrypoint script switches tool versions based on environment variables before executing the command. On termination, it syncs `/home/sre` to S3 if configured. ECS Exec automatically handles SSM agent setup - no manual installation needed.
+Use the Terraform configuration in `deploy/regional/` for complete infrastructure setup:
+
+```bash
+cd deploy/regional/
+
+# Copy example configuration
+cp terraform.tfvars.example terraform.tfvars
+
+# Edit with your VPC, subnets, and container image
+vi terraform.tfvars
+
+# Deploy infrastructure
+terraform init
+terraform apply
+
+# Use lifecycle scripts for incident management
+cd examples/
+./create_incident.sh <cluster-id> <incident-number> [oc-version]
+./launch_task.sh <task-family>
+./join_task.sh <task-id>
+./stop_task.sh <task-id>
+./close_incident.sh <task-family> <access-point-id>
+```
+
+See [`deploy/regional/README.md`](deploy/regional/README.md) for complete documentation.
+
+#### Manual Deployment
+
+For manual deployment without Terraform:
+
+1. Push container image to ECR or container registry
+2. Create ECS cluster with Container Insights
+3. Create EFS filesystem with access points per incident
+4. Create IAM roles with Bedrock, S3, and ECS Exec permissions
+5. Create task definition with EFS mount and environment variables
+6. Launch tasks with `--enable-execute-command`
+
+The container runs `sleep infinity` by default. On termination, it syncs `/home/sre` to S3 if configured.
 
 ## Image Details
 
 - **Base**: Fedora 43
 - **AWS CLI**: v2.32.16+ (official), v2.27.0 (Fedora RPM)
 - **OpenShift CLI**: 4.14.x, 4.15.x, 4.16.x, 4.17.x, 4.18.x, 4.19.x, 4.20.x
-- **Claude Code**: Latest (native installer), auto-updates disabled
+- **Claude Code**: 2.0.69 (native installer), auto-updates disabled
+- **Additional tools**: util-linux (includes su for user switching)
 
 ## Architecture Support
 

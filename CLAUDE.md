@@ -207,3 +207,84 @@ podman run --rm -e CLAUDE_CODE_USE_BEDROCK=0 rosa-boundary:latest sh -c 'echo $C
 ## Manifest List Structure
 
 The `make manifest` target creates an OCI image index containing both architectures. Podman/Docker automatically selects the correct platform when pulling `rosa-boundary:latest`.
+
+## Terraform Deployment Infrastructure
+
+### Location
+
+`deploy/regional/` - Complete Terraform configuration for AWS Fargate deployment
+
+### Structure
+
+```
+deploy/regional/
+  main.tf              - Provider, data sources, locals
+  variables.tf         - Input variables with validation
+  outputs.tf           - Output values (13 outputs)
+  s3.tf                - S3 bucket with WORM compliance
+  iam.tf               - Task execution and task roles
+  efs.tf               - EFS filesystem with mount targets
+  ecs.tf               - ECS cluster, task definition, security groups
+  examples/            - Lifecycle management scripts
+    create_incident.sh - Create access point + task definition
+    launch_task.sh     - Launch Fargate task
+    join_task.sh       - Connect via ECS Exec
+    stop_task.sh       - Stop task (triggers S3 sync)
+    close_incident.sh  - Cleanup access point + task definition
+    build-task-def.jq  - jq script for task definition transformation
+  get-vpc-info.sh      - Helper to discover VPC/subnets
+  .gitignore           - Excludes tfvars, state, .terraform/
+```
+
+### Per-Incident Isolation Model
+
+Each incident gets:
+- **Unique EFS access point**: `/$cluster_id/$incident_number/` → mounted to `/home/sre`
+- **Unique task definition**: `rosa-boundary-dev-$cluster_id-$incident_number-TIMESTAMP`
+  - Locks OC version at incident creation
+  - Pre-configured with CLUSTER_ID, INCIDENT_NUMBER, S3_AUDIT_BUCKET env vars
+- **Unique S3 paths per task**: `s3://bucket/$cluster_id/$incident_number/$date/$task_id/`
+
+**EFS Access Point Limit**: 10,000 per filesystem (as of Feb 2025)
+
+### S3 Path Auto-Generation
+
+Entrypoint logic (lines 5-27):
+- If `S3_AUDIT_ESCROW` is set → use it
+- Else if `S3_AUDIT_BUCKET` + `CLUSTER_ID` + `INCIDENT_NUMBER` are set:
+  - Auto-detect `TASK_ID` from ECS metadata
+  - Generate date: `$(date +%Y%m%d)`
+  - Build path: `s3://$bucket/$cluster/$incident/$date/$taskid/`
+
+### Lifecycle Script Workflow
+
+1. **create_incident.sh** `<cluster-id> <incident-number> [oc-version]`
+   - Creates EFS access point with tags
+   - Clones base task definition
+   - Adds environment variables
+   - Registers new task definition family
+   - Returns task family name + access point ID
+
+2. **launch_task.sh** `<task-family>`
+   - Launches Fargate task with ECS Exec enabled
+   - Waits for RUNNING state
+   - Returns task ID
+
+3. **join_task.sh** `<task-id>`
+   - Connects via ECS Exec as sre user
+
+4. **stop_task.sh** `<task-id> [reason]`
+   - Sends SIGTERM to task
+   - Entrypoint syncs to auto-generated S3 path
+   - Shows expected S3 location
+
+5. **close_incident.sh** `<task-family> <access-point-id>`
+   - Checks for running tasks
+   - Deregisters all task definition revisions
+   - Deletes EFS access point (prompts for confirmation)
+
+### Key Files for Deployment
+
+- `deploy/regional/terraform.tfvars.example` - Template configuration
+- `deploy/regional/README.md` - Complete deployment documentation
+- `deploy/regional/examples/*.sh` - Incident lifecycle scripts

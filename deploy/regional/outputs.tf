@@ -1,0 +1,69 @@
+output "bucket_name" {
+  description = "Name of the S3 audit bucket"
+  value       = aws_s3_bucket.audit.id
+}
+
+output "bucket_arn" {
+  description = "ARN of the S3 audit bucket"
+  value       = aws_s3_bucket.audit.arn
+}
+
+output "ecs_cluster_name" {
+  description = "Name of the ECS cluster"
+  value       = aws_ecs_cluster.main.name
+}
+
+output "ecs_cluster_arn" {
+  description = "ARN of the ECS cluster"
+  value       = aws_ecs_cluster.main.arn
+}
+
+output "task_definition_arn" {
+  description = "ARN of the ECS task definition"
+  value       = aws_ecs_task_definition.rosa_boundary.arn
+}
+
+output "task_definition_family" {
+  description = "Family name of the ECS task definition"
+  value       = aws_ecs_task_definition.rosa_boundary.family
+}
+
+output "task_role_arn" {
+  description = "ARN of the ECS task IAM role"
+  value       = aws_iam_role.task.arn
+}
+
+output "execution_role_arn" {
+  description = "ARN of the ECS task execution IAM role"
+  value       = aws_iam_role.execution.arn
+}
+
+output "efs_filesystem_id" {
+  description = "ID of the EFS filesystem"
+  value       = aws_efs_file_system.sre_home.id
+}
+
+output "efs_access_point_id" {
+  description = "ID of the EFS access point for /home/sre"
+  value       = aws_efs_access_point.sre.id
+}
+
+output "security_group_id" {
+  description = "Security group ID for Fargate tasks"
+  value       = aws_security_group.fargate.id
+}
+
+output "efs_security_group_id" {
+  description = "Security group ID for EFS mount targets"
+  value       = aws_security_group.efs.id
+}
+
+output "cloudwatch_log_group" {
+  description = "CloudWatch log group name for container logs"
+  value       = aws_cloudwatch_log_group.rosa_boundary.name
+}
+
+output "subnet_ids" {
+  description = "Subnet IDs for Fargate tasks"
+  value       = var.subnet_ids
+}

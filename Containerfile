@@ -9,6 +9,7 @@ RUN dnf install -y \
     curl \
     tar \
     gzip \
+    util-linux \
     && dnf clean all
 
 # Set up architecture-specific variables using uname
@@ -61,6 +62,7 @@ RUN useradd -m -s /bin/bash sre
 
 # Install Claude Code CLI (native installer)
 RUN curl -fsSL https://claude.ai/install.sh | HOME=/opt/claude-code bash && \
+    chmod -R a+rX /opt/claude-code/.local && \
     ln -s /opt/claude-code/.local/bin/claude /usr/local/bin/claude
 
 # Copy skeleton config files to /etc/skel-sre (copied to /home/sre at runtime)
