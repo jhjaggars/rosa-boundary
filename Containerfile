@@ -55,5 +55,10 @@ RUN alternatives --install /usr/local/bin/oc oc /opt/openshift/4.14/oc 14 && \
 # Cleanup temporary files
 RUN rm -f /tmp/aws_cli_arch /tmp/oc_suffix
 
+# Copy entrypoint script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 # Set entrypoint for Fargate
-ENTRYPOINT ["sleep", "infinity"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["sleep", "infinity"]
