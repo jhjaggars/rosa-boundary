@@ -6,6 +6,7 @@ Multi-architecture container based on Fedora 43 for working with AWS and OpenShi
 
 - **AWS CLI**: Both Fedora RPM and official AWS CLI v2 with alternatives support
 - **OpenShift CLI**: Versions 4.14 through 4.20 from stable channels
+- **Claude Code**: AI-powered CLI assistant with Amazon Bedrock integration
 - **Dynamic Version Selection**: Switch tool versions via environment variables at runtime
 - **ECS Exec Ready**: Designed for AWS Fargate with ECS Exec support
 - **Multi-architecture**: Supports both x86_64 (amd64) and ARM64 (aarch64)
@@ -42,6 +43,9 @@ The easiest way to select tool versions is via environment variables at containe
 | `OC_VERSION` | `4.14`, `4.15`, `4.16`, `4.17`, `4.18`, `4.19`, `4.20` | `4.20` | OpenShift CLI version |
 | `AWS_CLI` | `fedora`, `official` | `official` | AWS CLI source |
 | `S3_AUDIT_ESCROW` | S3 URI (e.g., `s3://bucket/path/`) | _(none)_ | S3 destination for /home/sre sync on exit |
+| `CLAUDE_CODE_USE_BEDROCK` | `0`, `1` | `1` | Enable Claude Code via Amazon Bedrock |
+| `AWS_REGION` | AWS region code | _(auto-detect)_ | AWS region for Bedrock. Auto-detected from ECS metadata; fallback to us-east-1 |
+| `ANTHROPIC_MODEL` | Bedrock model ID | _(default)_ | Override Claude model (e.g., `global.anthropic.claude-sonnet-4-5-20250929-v1:0`) |
 
 **Examples:**
 ```bash
@@ -115,6 +119,77 @@ alternatives --set oc /opt/openshift/4.17/oc
 alternatives --set oc /opt/openshift/4.19/oc
 ```
 
+## Claude Code
+
+The container includes Claude Code CLI with Amazon Bedrock integration for AI-assisted troubleshooting and automation.
+
+### Configuration
+
+**Location**: `/home/sre/.claude/`
+
+Default configuration files are automatically initialized on first run:
+- `settings.json` - Bedrock authentication and auto-update settings
+- `CLAUDE.md` - SRE workflow guidance and available tools documentation
+
+**Authentication**: Uses IAM via Amazon Bedrock (no API keys required)
+
+### AWS Region Detection
+
+Claude Code automatically detects the AWS region from ECS task metadata:
+
+1. Checks if `AWS_REGION` environment variable is set (explicit override)
+2. Queries ECS metadata endpoint to extract region from Task ARN
+3. Falls back to `us-east-1` if detection fails
+
+This ensures Claude Code uses Bedrock in the same region as the running container.
+
+### IAM Permissions
+
+The ECS task role needs Bedrock permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListInferenceProfiles"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:*:inference-profile/*",
+        "arn:aws:bedrock:*:*:foundation-model/*"
+      ]
+    }
+  ]
+}
+```
+
+### Usage Examples
+
+```bash
+# Start Claude Code session
+claude
+
+# Get help with a command
+claude "How do I check the status of cluster operators?"
+
+# Run interactive investigation
+claude "Investigate pods in crashloop in default namespace"
+
+# Disable Claude Code via environment variable
+podman run -e CLAUDE_CODE_USE_BEDROCK=0 rosa-boundary:latest
+```
+
+### Configuration Persistence
+
+Configuration files in `/home/sre/.claude/` are preserved across container restarts when using EFS:
+- **First run**: Skeleton files copied from `/etc/skel-sre/.claude/`
+- **Subsequent runs**: Existing configuration preserved (no overwrite)
+- **Customize**: Edit `/home/sre/.claude/CLAUDE.md` to add cluster-specific context
+
 ## Usage
 
 ### Running locally
@@ -139,10 +214,12 @@ This container is designed to run as an AWS Fargate task with ECS Exec for remot
 4. Set environment variables in task definition:
    - `OC_VERSION` and/or `AWS_CLI` if you need specific versions
    - `S3_AUDIT_ESCROW` for automatic backup on container termination (e.g., `s3://bucket/incident-123/`)
+   - `AWS_REGION` to override auto-detected region for Bedrock (optional)
 5. Enable ECS Exec on the task definition
-6. Configure IAM role permissions:
+6. Configure IAM task role permissions:
    - SSM permissions for ECS Exec
    - S3 write permissions if using `S3_AUDIT_ESCROW`
+   - **Bedrock permissions** for Claude Code (see Claude Code section above)
 7. Connect via `aws ecs execute-command --user sre` to connect as the sre user
 
 The container runs `sleep infinity` by default. The entrypoint script switches tool versions based on environment variables before executing the command. On termination, it syncs `/home/sre` to S3 if configured. ECS Exec automatically handles SSM agent setup - no manual installation needed.
@@ -152,6 +229,7 @@ The container runs `sleep infinity` by default. The entrypoint script switches t
 - **Base**: Fedora 43
 - **AWS CLI**: v2.32.16+ (official), v2.27.0 (Fedora RPM)
 - **OpenShift CLI**: 4.14.x, 4.15.x, 4.16.x, 4.17.x, 4.18.x, 4.19.x, 4.20.x
+- **Claude Code**: Latest (native installer), auto-updates disabled
 
 ## Architecture Support
 

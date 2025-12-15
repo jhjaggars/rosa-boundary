@@ -59,6 +59,14 @@ RUN rm -f /tmp/aws_cli_arch /tmp/oc_suffix
 # Home directory will be mounted as EFS via task definition
 RUN useradd -m -s /bin/bash sre
 
+# Install Claude Code CLI (native installer)
+RUN curl -fsSL https://claude.ai/install.sh | HOME=/opt/claude-code bash && \
+    ln -s /opt/claude-code/.local/bin/claude /usr/local/bin/claude
+
+# Copy skeleton config files to /etc/skel-sre (copied to /home/sre at runtime)
+# /home/sre is EFS-mounted by Fargate, so we copy at container start
+COPY skel/sre/ /etc/skel-sre/
+
 # Copy entrypoint script
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

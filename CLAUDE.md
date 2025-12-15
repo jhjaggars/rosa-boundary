@@ -98,6 +98,64 @@ The entrypoint implements signal trapping for graceful shutdown with automatic S
 
 This allows ephemeral containers to preserve investigation artifacts (logs, configs, scripts) when terminated.
 
+### Claude Code Integration
+
+**Installation**:
+- Installed via native installer in Containerfile:63-64 with `HOME=/opt/claude-code`
+- Binary symlinked to `/usr/local/bin/claude` for system-wide access
+- Auto-updates disabled via settings.json
+
+**Configuration Structure**:
+```
+skel/sre/.claude/           # Skeleton files copied at build time to /etc/skel-sre/
+  CLAUDE.md                 # SRE workflow guidance and tool documentation
+  settings.json             # Bedrock config, auto-update disabled
+```
+
+**Runtime Initialization**:
+The entrypoint script (lines 52-58) copies skeleton config to `/home/sre/.claude/` if not present:
+- First run on fresh EFS: copies skeleton files from `/etc/skel-sre/.claude/`
+- Subsequent runs: preserves user customizations (no overwrite)
+- Sets proper ownership for `sre` user
+
+**Bedrock Authentication**:
+Environment setup in entrypoint.sh (lines 60-80):
+1. Enables Bedrock via `CLAUDE_CODE_USE_BEDROCK=1` (default)
+2. Auto-detects AWS region from ECS task metadata (`ECS_CONTAINER_METADATA_URI_V4/task`)
+3. Extracts region from Task ARN format: `arn:aws:ecs:REGION:ACCOUNT:task/...`
+4. Falls back to `us-east-1` if detection fails
+5. Can be overridden via `AWS_REGION` environment variable
+
+**Environment Variables**:
+- `CLAUDE_CODE_USE_BEDROCK`: Enable Bedrock (default: 1)
+- `AWS_REGION`: Bedrock region (auto-detected from ECS metadata or fallback to us-east-1)
+- `ANTHROPIC_MODEL`: Override model ID (optional)
+- `DISABLE_AUTOUPDATER`: Disable auto-updates (set to 1 in settings.json)
+
+**IAM Requirements**:
+Task role needs:
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "bedrock:InvokeModel",
+    "bedrock:InvokeModelWithResponseStream",
+    "bedrock:ListInferenceProfiles"
+  ],
+  "Resource": [
+    "arn:aws:bedrock:*:*:inference-profile/*",
+    "arn:aws:bedrock:*:*:foundation-model/*"
+  ]
+}
+```
+
+**Key Files**:
+- `Containerfile:63-64` - Claude Code installation
+- `Containerfile:68` - Skeleton file copy
+- `entrypoint.sh:52-80` - Runtime initialization and Bedrock setup
+- `skel/sre/.claude/CLAUDE.md` - SRE context template
+- `skel/sre/.claude/settings.json` - Bedrock and auto-update config
+
 ## Testing Containers Locally
 
 ```bash
@@ -125,6 +183,18 @@ podman run --rm rosa-boundary:latest id sre
 # Test S3 sync on exit (will warn without credentials)
 podman run --rm -e S3_AUDIT_ESCROW=s3://test-bucket/test/ \
   rosa-boundary:latest sh -c "echo 'test' > /home/sre/test.txt && exit"
+
+# Test Claude Code installation
+podman run --rm rosa-boundary:latest claude --version
+
+# Verify skeleton config files are available
+podman run --rm rosa-boundary:latest ls -la /etc/skel-sre/.claude/
+
+# Test Bedrock environment variables
+podman run --rm rosa-boundary:latest sh -c 'echo "CLAUDE_CODE_USE_BEDROCK=$CLAUDE_CODE_USE_BEDROCK AWS_REGION=$AWS_REGION"'
+
+# Test Claude Code with Bedrock disabled
+podman run --rm -e CLAUDE_CODE_USE_BEDROCK=0 rosa-boundary:latest sh -c 'echo $CLAUDE_CODE_USE_BEDROCK'
 ```
 
 ## Adding New OpenShift Versions

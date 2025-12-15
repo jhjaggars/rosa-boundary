@@ -49,6 +49,36 @@ if [ -n "${AWS_CLI}" ]; then
   esac
 fi
 
+# Copy skeleton Claude Code config to /home/sre if not already present
+# /home/sre is EFS-mounted, so only copy if .claude doesn't exist
+if [ ! -d /home/sre/.claude ] && [ -d /etc/skel-sre/.claude ]; then
+  echo "Initializing Claude Code configuration in /home/sre/.claude..."
+  cp -r /etc/skel-sre/.claude /home/sre/.claude
+  chown -R sre:sre /home/sre/.claude
+fi
+
+# Set Bedrock defaults if CLAUDE_CODE_USE_BEDROCK is enabled
+if [ "${CLAUDE_CODE_USE_BEDROCK:-1}" = "1" ]; then
+  export CLAUDE_CODE_USE_BEDROCK=1
+
+  # Auto-detect region from ECS task metadata if AWS_REGION not set
+  if [ -z "${AWS_REGION}" ] && [ -n "${ECS_CONTAINER_METADATA_URI_V4}" ]; then
+    # Extract region from task ARN in metadata
+    TASK_METADATA=$(curl -s "${ECS_CONTAINER_METADATA_URI_V4}/task" 2>/dev/null || true)
+    if [ -n "${TASK_METADATA}" ]; then
+      # Task ARN format: arn:aws:ecs:REGION:ACCOUNT:task/CLUSTER/TASKID
+      DETECTED_REGION=$(echo "${TASK_METADATA}" | grep -o '"TaskARN":"arn:aws:ecs:[^:]*' | cut -d: -f4)
+      if [ -n "${DETECTED_REGION}" ]; then
+        export AWS_REGION="${DETECTED_REGION}"
+        echo "Auto-detected AWS_REGION=${AWS_REGION} from ECS task metadata"
+      fi
+    fi
+  fi
+
+  # Fallback to us-east-1 if still not set
+  export AWS_REGION="${AWS_REGION:-us-east-1}"
+fi
+
 # Warn if S3_AUDIT_ESCROW is not configured
 if [ -z "${S3_AUDIT_ESCROW}" ]; then
   echo "Warning: S3_AUDIT_ESCROW not set. /home/sre will not be backed up on exit." >&2
