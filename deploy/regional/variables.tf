@@ -16,13 +16,13 @@ variable "stage" {
 }
 
 variable "retention_days" {
-  description = "S3 object lock retention period in days"
+  description = "Retention period in days (must be valid for both S3 Object Lock and CloudWatch Logs)"
   type        = number
   default     = 90
 
   validation {
-    condition     = var.retention_days > 0 && var.retention_days <= 3650
-    error_message = "Retention days must be between 1 and 3650 (10 years)"
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653], var.retention_days)
+    error_message = "Retention days must be a valid CloudWatch Logs retention period"
   }
 }
 

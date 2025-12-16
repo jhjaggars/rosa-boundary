@@ -240,14 +240,15 @@ s3://641875867446-rosa-boundary-dev-us-east-2/rosa-prod-abc/INC-12345/20251215/d
 
 ## SSM Session Logging
 
-All ECS Exec sessions are automatically logged to the S3 audit bucket with WORM compliance.
+All ECS Exec sessions are automatically streamed to CloudWatch Logs in real-time with KMS encryption.
 
 ### Session Log Structure
 
 ```
-s3://bucket/ssm-sessions/YYYY-MM-DD/session-id/
-  - session-transcript (complete I/O capture)
-  - session-metadata (session details)
+CloudWatch Log Group: /ecs/rosa-boundary-dev/ssm-sessions
+  Log Streams: ecs-execute-command-<SESSION_ID>
+    - Real-time command I/O capture
+    - Session metadata in log events
 ```
 
 ### What's Logged
@@ -255,7 +256,7 @@ s3://bucket/ssm-sessions/YYYY-MM-DD/session-id/
 - **All commands typed** by the user
 - **All command output** (stdout/stderr)
 - **Session metadata**: Start time, end time, user identity, task ID
-- **Encrypted in transit** to S3
+- **Encrypted with KMS** in transit and at rest
 
 ### Separate from Container Audit
 
@@ -263,20 +264,30 @@ SSM session logs capture real-time terminal activity, while container audit sync
 
 | Location | Content | When Captured |
 |----------|---------|---------------|
-| `ssm-sessions/` | Terminal I/O transcript | Real-time during session |
-| `$cluster/$incident/$date/$taskid/` | `/home/sre` directory | On container exit |
+| `/ecs/.../ssm-sessions` (CloudWatch) | Terminal I/O transcript | Real-time streaming during session |
+| `$cluster/$incident/$date/$taskid/` (S3) | `/home/sre` directory | On container exit |
 
 ### Viewing Session Logs
 
 ```bash
-# List sessions for an incident
-aws s3 ls s3://BUCKET/ssm-sessions/ --recursive | grep "2025-12-15"
+# List recent log streams
+aws logs describe-log-streams \
+  --log-group-name "/ecs/rosa-boundary-dev/ssm-sessions" \
+  --order-by LastEventTime --descending \
+  --max-items 10
 
-# Download session transcript
-aws s3 cp s3://BUCKET/ssm-sessions/2025-12-15/session-id/transcript .
+# View session logs (real-time streaming)
+aws logs tail "/ecs/rosa-boundary-dev/ssm-sessions" --follow
 
-# View session metadata
-aws s3 cp s3://BUCKET/ssm-sessions/2025-12-15/session-id/metadata .
+# Get logs for specific session
+aws logs get-log-events \
+  --log-group-name "/ecs/rosa-boundary-dev/ssm-sessions" \
+  --log-stream-name "ecs-execute-command-<SESSION_ID>"
+
+# Filter logs by time range
+aws logs filter-log-events \
+  --log-group-name "/ecs/rosa-boundary-dev/ssm-sessions" \
+  --start-time $(date -d '1 hour ago' +%s)000
 ```
 
 ### Privacy Note

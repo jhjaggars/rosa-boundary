@@ -125,33 +125,26 @@ resource "aws_iam_role_policy" "task_ecs_exec" {
   })
 }
 
-# SSM session logging to S3
+# SSM session logging to CloudWatch Logs
 resource "aws_iam_role_policy" "task_ssm_logging" {
   name = "ssm-session-logging"
   role = aws_iam_role.task.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject"
-        ]
-        Resource = [
-          "${aws_s3_bucket.audit.arn}/ssm-sessions/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetEncryptionConfiguration"
-        ]
-        Resource = [
-          aws_s3_bucket.audit.arn
-        ]
-      }
-    ]
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ]
+      Resource = [
+        aws_cloudwatch_log_group.ssm_sessions.arn,
+        "${aws_cloudwatch_log_group.ssm_sessions.arn}:*"
+      ]
+    }]
   })
 }
 

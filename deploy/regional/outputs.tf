@@ -77,3 +77,8 @@ output "kms_key_arn" {
   description = "KMS key ARN for ECS Exec encryption"
   value       = aws_kms_key.exec_session.arn
 }
+
+output "ssm_session_log_group" {
+  description = "CloudWatch log group for SSM session logs"
+  value       = aws_cloudwatch_log_group.ssm_sessions.name
+}

@@ -13,9 +13,8 @@ resource "aws_ecs_cluster" "main" {
       logging    = "OVERRIDE"
 
       log_configuration {
-        s3_bucket_name               = aws_s3_bucket.audit.id
-        s3_bucket_encryption_enabled = true
-        s3_key_prefix                = "ssm-sessions/"
+        cloud_watch_log_group_name     = aws_cloudwatch_log_group.ssm_sessions.name
+        cloud_watch_encryption_enabled = false
       }
     }
   }
@@ -27,6 +26,14 @@ resource "aws_ecs_cluster" "main" {
 resource "aws_cloudwatch_log_group" "rosa_boundary" {
   name              = "/ecs/${var.project}-${var.stage}"
   retention_in_days = var.log_retention_days
+
+  tags = local.common_tags
+}
+
+# CloudWatch log group for SSM session logs (separate from container logs)
+resource "aws_cloudwatch_log_group" "ssm_sessions" {
+  name              = "/ecs/${var.project}-${var.stage}/ssm-sessions"
+  retention_in_days = var.retention_days
 
   tags = local.common_tags
 }
