@@ -96,6 +96,7 @@ if [ -z "$REVISIONS" ]; then
 else
   REVISION_COUNT=0
   for revision_arn in $REVISIONS; do
+    echo "  Deregistering: $revision_arn"
     aws ecs deregister-task-definition \
       --profile "$PROFILE" \
       --region "$REGION" \

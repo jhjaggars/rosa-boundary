@@ -124,3 +124,51 @@ resource "aws_iam_role_policy" "task_ecs_exec" {
     }]
   })
 }
+
+# SSM session logging to S3
+resource "aws_iam_role_policy" "task_ssm_logging" {
+  name = "ssm-session-logging"
+  role = aws_iam_role.task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.audit.arn}/ssm-sessions/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetEncryptionConfiguration"
+        ]
+        Resource = [
+          aws_s3_bucket.audit.arn
+        ]
+      }
+    ]
+  })
+}
+
+# KMS permissions for ECS Exec session encryption
+resource "aws_iam_role_policy" "task_kms" {
+  name = "kms-exec-session"
+  role = aws_iam_role.task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
+      ]
+      Resource = aws_kms_key.exec_session.arn
+    }]
+  })
+}

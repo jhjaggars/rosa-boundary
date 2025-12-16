@@ -236,6 +236,55 @@ s3://641875867446-rosa-boundary-dev-us-east-2/rosa-prod-abc/INC-12345/20251215/d
 
 **Note:** EFS data remains on the filesystem but is no longer accessible. S3 data is retained per WORM policy.
 
+---
+
+## SSM Session Logging
+
+All ECS Exec sessions are automatically logged to the S3 audit bucket with WORM compliance.
+
+### Session Log Structure
+
+```
+s3://bucket/ssm-sessions/YYYY-MM-DD/session-id/
+  - session-transcript (complete I/O capture)
+  - session-metadata (session details)
+```
+
+### What's Logged
+
+- **All commands typed** by the user
+- **All command output** (stdout/stderr)
+- **Session metadata**: Start time, end time, user identity, task ID
+- **Encrypted in transit** to S3
+
+### Separate from Container Audit
+
+SSM session logs capture real-time terminal activity, while container audit sync captures final state:
+
+| Location | Content | When Captured |
+|----------|---------|---------------|
+| `ssm-sessions/` | Terminal I/O transcript | Real-time during session |
+| `$cluster/$incident/$date/$taskid/` | `/home/sre` directory | On container exit |
+
+### Viewing Session Logs
+
+```bash
+# List sessions for an incident
+aws s3 ls s3://BUCKET/ssm-sessions/ --recursive | grep "2025-12-15"
+
+# Download session transcript
+aws s3 cp s3://BUCKET/ssm-sessions/2025-12-15/session-id/transcript .
+
+# View session metadata
+aws s3 cp s3://BUCKET/ssm-sessions/2025-12-15/session-id/metadata .
+```
+
+### Privacy Note
+
+Session logs contain complete terminal output including any credentials or sensitive data typed during the session. Review logs before sharing.
+
+---
+
 ## Environment Variables
 
 ### Automatically Set (by lifecycle scripts)

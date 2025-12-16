@@ -7,6 +7,19 @@ resource "aws_ecs_cluster" "main" {
     value = "enabled"
   }
 
+  configuration {
+    execute_command_configuration {
+      kms_key_id = aws_kms_key.exec_session.arn
+      logging    = "OVERRIDE"
+
+      log_configuration {
+        s3_bucket_name               = aws_s3_bucket.audit.id
+        s3_bucket_encryption_enabled = true
+        s3_key_prefix                = "ssm-sessions/"
+      }
+    }
+  }
+
   tags = local.common_tags
 }
 

@@ -101,6 +101,7 @@ fi
 
 # Run the command in the background and wait for it
 # This allows the shell to remain and handle signals
+# Running as sre user (set via USER directive in Containerfile)
 "${@:-sleep infinity}" &
 CHILD_PID=$!
 wait ${CHILD_PID}

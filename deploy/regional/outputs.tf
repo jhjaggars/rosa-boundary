@@ -67,3 +67,13 @@ output "subnet_ids" {
   description = "Subnet IDs for Fargate tasks"
   value       = var.subnet_ids
 }
+
+output "kms_key_id" {
+  description = "KMS key ID for ECS Exec encryption"
+  value       = aws_kms_key.exec_session.id
+}
+
+output "kms_key_arn" {
+  description = "KMS key ARN for ECS Exec encryption"
+  value       = aws_kms_key.exec_session.arn
+}

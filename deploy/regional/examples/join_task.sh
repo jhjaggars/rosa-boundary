@@ -49,13 +49,15 @@ if [ "$TASK_STATUS" != "RUNNING" ]; then
   exit 1
 fi
 
-echo "Task is running. Connecting as sre user..."
+echo "Task is running. Connecting as sre user with proper terminal emulation..."
 echo ""
 
-# Connect via ECS Exec as sre user
+# Connect via ECS Exec using script command for proper PTY handling
+# The script command creates a pseudo-terminal, then su switches to sre user
+# This enables full terminal features (colors, cursor movement) for tools like Claude Code
 AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws ecs execute-command \
   --cluster "$CLUSTER_NAME" \
   --task "$TASK_ID" \
   --container rosa-boundary \
   --interactive \
-  --command '/usr/bin/su - sre'
+  --command "/bin/sh -c 'cd /home/sre && export \$(cat /proc/1/environ | tr \\\\0 \\\\n) && script -q /dev/null -c \"su - sre\"'"

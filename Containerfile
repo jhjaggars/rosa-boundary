@@ -10,6 +10,7 @@ RUN dnf install -y \
     tar \
     gzip \
     util-linux \
+    util-linux-script \
     && dnf clean all
 
 # Set up architecture-specific variables using uname
