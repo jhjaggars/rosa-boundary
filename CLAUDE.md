@@ -228,12 +228,15 @@ The `make manifest` target creates an OCI image index containing both architectu
 deploy/regional/
   main.tf              - Provider, data sources, locals
   variables.tf         - Input variables with validation
-  outputs.tf           - Output values (13 outputs)
+  outputs.tf           - Output values (Lambda URL, OIDC provider, etc.)
   s3.tf                - S3 bucket with WORM compliance
   iam.tf               - Task execution and task roles
   efs.tf               - EFS filesystem with mount targets
   ecs.tf               - ECS cluster, task definition, security groups
-  examples/            - Lifecycle management scripts
+  kms.tf               - KMS key for ECS Exec encryption
+  oidc.tf              - OIDC identity provider for Keycloak
+  lambda-create-investigation.tf  - Lambda function for investigation creation
+  examples/            - Manual lifecycle management scripts
     create_investigation.sh - Create access point + task definition
     launch_task.sh     - Launch Fargate task
     join_task.sh       - Connect via ECS Exec
@@ -243,6 +246,48 @@ deploy/regional/
   get-vpc-info.sh      - Helper to discover VPC/subnets
   .gitignore           - Excludes tfvars, state, .terraform/
 ```
+
+### Lambda-Based Investigation Creation
+
+**Location**: `lambda/create-investigation/`
+
+The Lambda function provides OIDC-authenticated investigation creation with automatic IAM role management:
+
+**Architecture**:
+1. **Authentication**: Validates OIDC token from Keycloak
+2. **Authorization**: Checks `sre-team` group membership
+3. **Role Management**: Creates or reuses per-user IAM role with tag-based permissions
+4. **Task Creation**: Launches ECS task with owner tags
+5. **Response**: Returns role ARN and task ARN for client use
+
+**Handler Functions** (`handler.py`):
+- `validate_oidc_token()` - JWT signature verification and claim extraction
+- `get_or_create_user_role()` - Deterministic role creation based on OIDC `sub` claim
+- `create_investigation_task()` - ECS task launch with owner tags
+- `lambda_handler()` - Main entry point with error handling
+
+**IAM Policy Created** (per-user role):
+```python
+# ExecuteCommandOnCluster - Allow ecs:ExecuteCommand on cluster (no tag condition)
+# ExecuteCommandOnOwnedTasks - Allow ecs:ExecuteCommand on tasks with matching owner_sub tag
+# DescribeAndListECS - Allow task describe/list operations
+# SSMSessionForECSExec - Allow ssm:StartSession with tag condition
+# KMSForECSExec - Allow KMS operations for encrypted sessions
+```
+
+**Tag-Based Authorization**:
+- Tasks tagged with `owner_sub` (OIDC `sub` claim)
+- Roles can only exec into tasks with matching `owner_sub` tag
+- Cross-user task access prevented at IAM policy level
+
+**Building Lambda**:
+```bash
+cd lambda/create-investigation/
+make clean build  # Builds dependencies in Lambda container
+```
+
+**Deployment**:
+Lambda function is deployed via Terraform in `deploy/regional/lambda-create-investigation.tf`
 
 ### Per-Investigation Isolation Model
 
@@ -264,7 +309,129 @@ Entrypoint logic (lines 5-27):
   - Generate date: `$(date +%Y%m%d)`
   - Build path: `s3://$bucket/$cluster/$investigation/$date/$taskid/`
 
-### Lifecycle Script Workflow
+## OIDC Authentication Tools
+
+**Location**: `tools/sre-auth/`
+
+Two focused scripts handle OIDC authentication and AWS role assumption:
+
+### get-oidc-token.sh
+
+**Purpose**: Obtain OIDC ID token from Keycloak via browser-based PKCE flow
+
+**Features**:
+- PKCE authorization code flow (secure for public clients)
+- Local callback server on port 8400
+- Token caching for 4 minutes (reduces browser popup fatigue)
+- Tokens returned to stdout, messages to stderr
+
+**Usage**:
+```bash
+# Get token (uses cache if valid)
+TOKEN=$(./get-oidc-token.sh)
+
+# Force fresh authentication
+TOKEN=$(./get-oidc-token.sh --force)
+```
+
+**Token Cache**: `~/.sre-auth/id-token.cache` (600 permissions, 4-minute validity)
+
+### assume-role.sh
+
+**Purpose**: Assume AWS IAM role using OIDC web identity federation
+
+**Features**:
+- Calls `get-oidc-token.sh` internally for OIDC token
+- Invokes `aws sts assume-role-with-web-identity`
+- Returns bash export statements for easy credential loading
+- No AWS credential caching (AWS CLI handles this)
+
+**Usage**:
+```bash
+# Assume role and export credentials
+eval $(./assume-role.sh --role arn:aws:iam::123456789012:role/rosa-boundary-user-abc123)
+
+# Verify identity
+aws sts get-caller-identity
+```
+
+**Key Implementation**:
+- Uses cached OIDC token if < 4 minutes old
+- Session credentials valid for 1 hour
+- Supports `--force` to bypass OIDC token cache
+
+### create-investigation-lambda.sh
+
+**Purpose**: End-to-end wrapper for Lambda-based investigation creation
+
+**Workflow**:
+1. Get OIDC token via `get-oidc-token.sh`
+2. Invoke Lambda function to create investigation
+3. Lambda validates token and creates role + task
+4. Assume returned role via `assume-role.sh`
+5. Wait for task to reach RUNNING state
+6. Display ECS Exec connection command
+
+**Usage**:
+```bash
+cd tools/
+./create-investigation-lambda.sh rosa-boundary-dev inv-12345 4.20
+```
+
+**See**: `tools/sre-auth/README.md` for detailed documentation
+
+## Keycloak Infrastructure
+
+**Location**: `deploy/keycloak/`
+
+Terraform configuration for Keycloak realm and OIDC clients on ROSA cluster:
+
+**Resources**:
+- Keycloak realm: `sre-ops`
+- OIDC client: `aws-sre-access` (public client, PKCE required)
+- User federation and group management
+- Script mappers for AWS session tags
+
+**Key Files**:
+- `main.tf` - Keycloak provider configuration
+- `realm.tf` - Realm and client definitions
+- `aws-session-tags-mapper.js` - Custom script mapper for AWS tags
+- `PREREQUISITES.md` - Setup requirements
+- `QUICKSTART.md` - Deployment guide
+
+### Investigation Creation Workflows
+
+Two approaches are available for creating investigations:
+
+#### Lambda-Based (Recommended)
+
+**Workflow**: OIDC authentication → Lambda authorization → Automatic role + task creation
+
+```bash
+tools/create-investigation-lambda.sh <cluster-id> <investigation-id> [oc-version]
+```
+
+**Steps**:
+1. User authenticates via Keycloak (browser popup, PKCE flow)
+2. Script calls Lambda with OIDC token
+3. Lambda validates token, checks `sre-team` group membership
+4. Lambda creates/reuses IAM role tied to user's OIDC `sub` claim
+5. Lambda creates EFS access point and launches tagged ECS task
+6. Script assumes returned role (tag-based permissions)
+7. User connects via ECS Exec with isolated access
+
+**Benefits**:
+- Group-based authorization (Lambda validates membership)
+- Per-user IAM roles (one role per OIDC sub)
+- Tag-based task isolation (users can only access own tasks)
+- Token caching (4 minutes, reduces browser popups)
+- Automatic role management (no manual IAM operations)
+
+#### Manual Lifecycle Scripts
+
+**Workflow**: Direct AWS API calls → Manual task management
+
+Located in `deploy/regional/examples/`:
 
 1. **create_investigation.sh** `<cluster-id> <investigation-id> [oc-version]`
    - Creates EFS access point with tags
@@ -291,11 +458,20 @@ Entrypoint logic (lines 5-27):
    - Deregisters all task definition revisions
    - Deletes EFS access point (prompts for confirmation)
 
+**Use Cases**:
+- Testing infrastructure without OIDC
+- Debugging task definition issues
+- Administrative operations
+- CI/CD automation with service roles
+
 ### Key Files for Deployment
 
 - `deploy/regional/terraform.tfvars.example` - Template configuration
 - `deploy/regional/README.md` - Complete deployment documentation
-- `deploy/regional/examples/*.sh` - Incident lifecycle scripts
+- `deploy/regional/examples/*.sh` - Manual lifecycle scripts
+- `lambda/create-investigation/handler.py` - Lambda authorization logic
+- `tools/sre-auth/` - OIDC authentication scripts
+- `tools/create-investigation-lambda.sh` - End-to-end creation wrapper
 
 ## Keycloak Identity Provider (OpenShift)
 
@@ -345,9 +521,7 @@ oc get route keycloak -n keycloak -o jsonpath='{.spec.host}'
 - **ExternalSecrets**: DB credentials from AWS SSM Parameter Store (`/keycloak/db/*`)
 - **ClusterSecretStore**: Uses external-secrets-operator IAM role (IRSA)
 - **Edge TLS**: OpenShift Router terminates TLS, Keycloak serves HTTP
-- **OIDC Provider**: Configured for HCP Boundary integration
-
-**For Keycloak realm configuration and Boundary integration**, see [`docs/configuration/keycloak-realm-setup.md`](docs/configuration/keycloak-realm-setup.md).
+- **OIDC Provider**: Configured for AWS Lambda and HCP Boundary integration
 
 ## Zero-Trust Access Pattern
 
@@ -357,12 +531,10 @@ The complete system integrates three components:
 2. **HCP Boundary** (SaaS) - Authorization enforcement, session management, audit logging
 3. **ECS Fargate** (AWS) - Ephemeral containers with SSM access
 
-**Architecture diagrams and configuration guides**: [`docs/`](docs/README.md)
-
 **Key integration points:**
 - Keycloak realm: `rosa-boundary` with OIDC client `hcp-boundary`
 - Boundary auth method: OIDC with Keycloak issuer, managed groups for RBAC
-- Boundary targets: Per-incident TCP targets using `-exec` wrapper for ECS Exec
+- Boundary targets: Per-investigation TCP targets using `-exec` wrapper for ECS Exec
 - AWS IAM: Policies for ECS ExecuteCommand, SSM StartSession, KMS Decrypt
 - Integration script: `ecs-exec.sh` wraps `aws ecs execute-command` via Boundary `-exec` flag
 

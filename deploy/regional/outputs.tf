@@ -82,3 +82,43 @@ output "ssm_session_log_group" {
   description = "CloudWatch log group for SSM session logs"
   value       = aws_cloudwatch_log_group.ssm_sessions.name
 }
+
+output "oidc_provider_arn" {
+  description = "ARN of the Keycloak OIDC provider"
+  value       = aws_iam_openid_connect_provider.keycloak.arn
+}
+
+output "oidc_sre_role_arn" {
+  description = "ARN of the OIDC-federated SRE role"
+  value       = aws_iam_role.oidc_sre.arn
+}
+
+output "saml_provider_arn" {
+  description = "ARN of the Keycloak SAML provider"
+  value       = aws_iam_saml_provider.keycloak.arn
+}
+
+output "saml_sre_role_arn" {
+  description = "ARN of the SAML-federated SRE role"
+  value       = aws_iam_role.saml_sre.arn
+}
+
+output "lambda_function_url" {
+  description = "URL for the create-investigation Lambda function"
+  value       = aws_lambda_function_url.create_investigation.function_url
+}
+
+output "lambda_function_name" {
+  description = "Name of the create-investigation Lambda function"
+  value       = aws_lambda_function.create_investigation.function_name
+}
+
+output "lambda_function_arn" {
+  description = "ARN of the create-investigation Lambda function"
+  value       = aws_lambda_function.create_investigation.arn
+}
+
+output "lambda_role_arn" {
+  description = "ARN of the create-investigation Lambda execution role"
+  value       = aws_iam_role.create_investigation_lambda.arn
+}
