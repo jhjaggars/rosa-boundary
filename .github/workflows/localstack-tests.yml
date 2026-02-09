@@ -20,9 +20,33 @@ env:
   LOCALSTACK_ENDPOINT: http://localhost:4566
 
 jobs:
+  check-fork:
+    name: Check if Fork PR
+    runs-on: ubuntu-latest
+    outputs:
+      is-fork: ${{ steps.check.outputs.is-fork }}
+    steps:
+      - name: Check if PR is from fork
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              echo "is-fork=true" >> $GITHUB_OUTPUT
+              echo "::notice::LocalStack tests skipped on fork PRs (no access to secrets). Tests will run when merged or pushed to upstream."
+            else
+              echo "is-fork=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "is-fork=false" >> $GITHUB_OUTPUT
+          fi
+
   localstack-tests:
     name: LocalStack Integration Tests
     runs-on: ubuntu-latest
+    needs: check-fork
+    # Skip LocalStack tests on fork PRs (no access to LOCALSTACK_AUTH_TOKEN secret)
+    # These tests will run when maintainers push to upstream or after merge to main
+    if: needs.check-fork.outputs.is-fork != 'true'
 
     steps:
       - name: Checkout code
