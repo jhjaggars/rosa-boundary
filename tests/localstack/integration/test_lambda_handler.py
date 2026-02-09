@@ -1,4 +1,11 @@
-"""Test Lambda function with OIDC authentication"""
+"""Test Lambda function with OIDC authentication
+
+NOTE: These tests require Docker/Podman executor for Lambda.
+      LocalStack's local executor does not support Lambda function execution.
+
+      - In CI: Tests run with Docker executor (compose.ci.yml)
+      - Locally: Tests are skipped (compose.yml uses local executor for macOS compat)
+"""
 
 import pytest
 import json
@@ -9,8 +16,19 @@ import io
 from datetime import datetime
 
 # Add lambda directory to path for imports
-LAMBDA_DIR = '/Users/jjaggars/code/rosa-boundary/lambda/create-investigation'
+LAMBDA_DIR = os.path.join(os.path.dirname(__file__), '../../../lambda/create-investigation')
 sys.path.insert(0, LAMBDA_DIR)
+
+# Skip Lambda tests when using local executor (local dev on macOS)
+# CI uses Docker executor via compose.ci.yml
+LAMBDA_EXECUTOR = os.getenv('LAMBDA_EXECUTOR', 'local')
+skip_lambda_tests = LAMBDA_EXECUTOR == 'local'
+
+pytestmark = pytest.mark.skipif(
+    skip_lambda_tests,
+    reason=f"Lambda tests require Docker executor (current: {LAMBDA_EXECUTOR}). "
+           "Set LAMBDA_EXECUTOR=docker or use compose.ci.yml for CI."
+)
 
 
 @pytest.fixture
@@ -70,8 +88,28 @@ def deployed_lambda(lambda_client, iam_client, logs_client, mock_oidc_issuer):
         handler_path = os.path.join(LAMBDA_DIR, 'handler.py')
         zip_file.write(handler_path, 'handler.py')
 
-        # Add dependencies (minimal for LocalStack)
-        # Note: In real deployment, include full requirements
+        # Add dependencies from Lambda directory
+        # These are installed via `make deps` in the Lambda container
+        required_packages = [
+            'jwt', 'requests', 'urllib3', 'certifi', 'charset_normalizer',
+            'idna', 'PyJWT-2.10.2.dist-info', 'requests-2.33.0.dist-info',
+            'urllib3-2.3.0.dist-info', 'certifi-2026.1.4.dist-info',
+            'charset_normalizer-3.4.4.dist-info', 'idna-3.12.dist-info'
+        ]
+
+        for package in required_packages:
+            package_path = os.path.join(LAMBDA_DIR, package)
+            if os.path.exists(package_path):
+                if os.path.isdir(package_path):
+                    # Add directory recursively
+                    for root, dirs, files in os.walk(package_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, LAMBDA_DIR)
+                            zip_file.write(file_path, arcname)
+                else:
+                    # Add single file
+                    zip_file.write(package_path, package)
 
     zip_buffer.seek(0)
     function_code = zip_buffer.read()

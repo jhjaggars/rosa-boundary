@@ -20,9 +20,33 @@ env:
   LOCALSTACK_ENDPOINT: http://localhost:4566
 
 jobs:
+  check-fork:
+    name: Check if Fork PR
+    runs-on: ubuntu-latest
+    outputs:
+      is-fork: ${{ steps.check.outputs.is-fork }}
+    steps:
+      - name: Check if PR is from fork
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              echo "is-fork=true" >> $GITHUB_OUTPUT
+              echo "::notice::LocalStack tests skipped on fork PRs (no access to secrets). Tests will run when merged or pushed to upstream."
+            else
+              echo "is-fork=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "is-fork=false" >> $GITHUB_OUTPUT
+          fi
+
   localstack-tests:
     name: LocalStack Integration Tests
     runs-on: ubuntu-latest
+    needs: check-fork
+    # Skip LocalStack tests on fork PRs (no access to LOCALSTACK_AUTH_TOKEN secret)
+    # These tests will run when maintainers push to upstream or after merge to main
+    if: needs.check-fork.outputs.is-fork != 'true'
 
     steps:
       - name: Checkout code
@@ -46,6 +70,15 @@ jobs:
         run: |
           uv pip install --system pytest boto3 requests
 
+      - name: Setup Podman socket for LocalStack
+        run: |
+          # Start podman socket for rootless containers
+          systemctl --user start podman.socket
+          # Create docker.sock symlink for LocalStack compatibility
+          sudo mkdir -p /var/run
+          sudo ln -sf /run/user/$(id -u)/podman/podman.sock /var/run/docker.sock
+          sudo chmod 666 /var/run/docker.sock
+
       - name: Configure LocalStack environment
         run: |
           cd tests/localstack
@@ -54,10 +87,12 @@ jobs:
       - name: Start LocalStack
         run: |
           cd tests/localstack
-          podman-compose up -d
+          # Use CI compose file with Docker executor for Lambda support
+          podman-compose -f compose.ci.yml --env-file .env up -d
 
           echo "Waiting for LocalStack to be ready..."
-          timeout 120 bash -c 'until curl -s http://localhost:4566/_localstack/health | grep -q "\"ecs\""; do sleep 5; done'
+          # Increased timeout to 180s for slower CI environments
+          timeout 180 bash -c 'until curl -s http://localhost:4566/_localstack/health | grep -q "\"ecs\""; do echo "Waiting for LocalStack..."; sleep 5; done'
 
           echo "LocalStack is ready!"
           curl -s http://localhost:4566/_localstack/health | jq '.services | to_entries | map(select(.value == "available" or .value == "running")) | length' || echo "LocalStack health check complete"
@@ -65,9 +100,8 @@ jobs:
       - name: Run integration tests
         run: |
           cd tests/localstack
-          # Skip Lambda tests - LocalStack local executor can't fully execute Lambda functions
-          # Lambda unit tests run in separate job with moto
-          pytest integration/ -v -m "not slow" --ignore=integration/test_lambda_handler.py --tb=short --junit-xml=test-results.xml
+          # Run all integration tests including Lambda (Docker executor enabled in CI)
+          LAMBDA_EXECUTOR=docker pytest integration/ -v -m "not slow" --tb=short --junit-xml=test-results.xml
         continue-on-error: false
 
       - name: Show LocalStack logs on failure
@@ -75,10 +109,10 @@ jobs:
         run: |
           cd tests/localstack
           echo "=== LocalStack Logs ==="
-          podman logs localstack_localstack_1 --tail 100
+          podman logs --tail 100 localstack_localstack_1 || echo "Failed to get LocalStack logs"
           echo ""
           echo "=== Mock OIDC Logs ==="
-          podman logs localstack_mock-oidc_1 --tail 50
+          podman logs --tail 50 localstack_mock-oidc_1 || echo "Failed to get OIDC logs"
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
@@ -91,7 +125,7 @@ jobs:
         if: always()
         run: |
           cd tests/localstack
-          podman-compose down -v
+          podman-compose -f compose.ci.yml down -v
 
   lambda-unit-tests:
     name: Lambda Unit Tests
