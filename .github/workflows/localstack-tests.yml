@@ -54,7 +54,8 @@ jobs:
       - name: Start LocalStack
         run: |
           cd tests/localstack
-          podman-compose up -d
+          # Use CI compose file with Docker executor for Lambda support
+          podman-compose -f compose.ci.yml up -d
 
           echo "Waiting for LocalStack to be ready..."
           # Increased timeout to 180s for slower CI environments
@@ -66,9 +67,8 @@ jobs:
       - name: Run integration tests
         run: |
           cd tests/localstack
-          # Skip Lambda tests - LocalStack local executor can't fully execute Lambda functions
-          # Lambda unit tests run in separate job with moto
-          pytest integration/ -v -m "not slow" --ignore=integration/test_lambda_handler.py --tb=short --junit-xml=test-results.xml
+          # Run all integration tests including Lambda (Docker executor enabled in CI)
+          LAMBDA_EXECUTOR=docker pytest integration/ -v -m "not slow" --tb=short --junit-xml=test-results.xml
         continue-on-error: false
 
       - name: Show LocalStack logs on failure
@@ -92,7 +92,7 @@ jobs:
         if: always()
         run: |
           cd tests/localstack
-          podman-compose down -v
+          podman-compose -f compose.ci.yml down -v
 
   lambda-unit-tests:
     name: Lambda Unit Tests

@@ -2,7 +2,9 @@
 
 NOTE: These tests require Docker/Podman executor for Lambda.
       LocalStack's local executor does not support Lambda function execution.
-      These tests are skipped in CI/local testing. Use moto-based unit tests instead.
+
+      - In CI: Tests run with Docker executor (compose.ci.yml)
+      - Locally: Tests are skipped (compose.yml uses local executor for macOS compat)
 """
 
 import pytest
@@ -14,15 +16,18 @@ import io
 from datetime import datetime
 
 # Add lambda directory to path for imports
-LAMBDA_DIR = '/Users/jjaggars/code/rosa-boundary/lambda/create-investigation'
+LAMBDA_DIR = os.path.join(os.path.dirname(__file__), '../../../lambda/create-investigation')
 sys.path.insert(0, LAMBDA_DIR)
 
-# Skip all tests in this module when using LocalStack local executor
-# LocalStack local executor doesn't support Lambda function execution
-# See: https://docs.localstack.cloud/user-guide/aws/lambda/#lambda-executors
-pytestmark = pytest.mark.skip(
-    reason="LocalStack local executor does not support Lambda function execution. "
-           "Docker/Podman executor required for Lambda tests."
+# Skip Lambda tests when using local executor (local dev on macOS)
+# CI uses Docker executor via compose.ci.yml
+LAMBDA_EXECUTOR = os.getenv('LAMBDA_EXECUTOR', 'local')
+skip_lambda_tests = LAMBDA_EXECUTOR == 'local'
+
+pytestmark = pytest.mark.skipif(
+    skip_lambda_tests,
+    reason=f"Lambda tests require Docker executor (current: {LAMBDA_EXECUTOR}). "
+           "Set LAMBDA_EXECUTOR=docker or use compose.ci.yml for CI."
 )
 
 

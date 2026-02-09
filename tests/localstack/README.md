@@ -130,9 +130,13 @@ pytest -m e2e
 
 ### LocalStack Services
 
-compose.yml starts two containers:
+Two compose files are provided:
+- **compose.yml** - Local development (macOS compatible, Lambda tests skipped)
+- **compose.ci.yml** - CI/Linux (Docker executor, Lambda tests enabled)
 
-1. **localstack** - LocalStack Pro with podman executor for ECS/Lambda
+Both start two containers:
+
+1. **localstack** - LocalStack Pro with ECS, EFS, S3, IAM, Lambda, etc.
 2. **mock-oidc** - Flask server providing JWKS and test token generation
 
 ### Mock OIDC Server
@@ -184,17 +188,33 @@ Tests verify IAM policy conditions without executing tasks:
 
 ### Lambda Testing
 
-Lambda tests have limited functionality with LocalStack's local executor:
+Lambda tests require LocalStack's Docker executor to run. We provide two compose files:
 
-- Lambda function deployment may fail with local executor
-- IAM/ECS/EFS operations within Lambda require docker/podman executor
-- **Recommendation**: Skip Lambda integration tests in LocalStack
-- Lambda unit tests run separately with moto (faster, more reliable)
+**`compose.yml`** (default - local development):
+- Uses `LAMBDA_EXECUTOR=local` for macOS compatibility
+- Lambda tests are automatically skipped
+- Faster startup, no Docker socket required
 
-**To skip Lambda tests**:
+**`compose.ci.yml`** (CI/Linux):
+- Uses `LAMBDA_EXECUTOR=docker` with socket mount
+- Lambda tests run successfully
+- Requires Docker/Podman socket access
+
+**Local development** (macOS):
 ```bash
-pytest integration/ --ignore=integration/test_lambda_handler.py
+# Lambda tests skipped automatically
+make localstack-up
+make test-localstack-fast
 ```
+
+**Linux/CI** (enable Lambda tests):
+```bash
+cd tests/localstack
+podman-compose -f compose.ci.yml up -d
+LAMBDA_EXECUTOR=docker pytest integration/ -v -m "not slow"
+```
+
+Lambda tests are also available as unit tests with moto (see `lambda/create-investigation/test_handler.py`).
 
 ## Terraform Testing
 
