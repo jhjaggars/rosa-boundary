@@ -1,0 +1,7 @@
+# Keycloak Configuration
+keycloak_url              = "https://keycloak-keycloak.apps.rosa.dev.dyee.p3.openshiftapps.com"
+keycloak_realm            = "sre-ops"        # Realm to create/manage
+keycloak_admin_realm      = "master"        # Realm to authenticate against (usually 'master')
+keycloak_admin_client_id  = "admin-cli"     # Admin client ID
+keycloak_admin_username   = "admin"         # Admin username
+keycloak_admin_password   = "CHANGEME"      # Admin password
