@@ -132,7 +132,7 @@ fmt: ## Format Go and shell code
 	gofmt -w .
 	@echo "Formatting shell scripts..."
 	@if command -v shfmt > /dev/null 2>&1; then \
-		shfmt -w -i 4 tools/ deploy/regional/examples/; \
+		shfmt -w -i 4 entrypoint.sh deploy/regional/examples/; \
 	else \
 		echo "shfmt not installed, skipping shell formatting"; \
 	fi
@@ -147,7 +147,7 @@ lint: ## Lint Go code and shell scripts
 	fi
 	@echo "Linting shell scripts..."
 	@if command -v shellcheck > /dev/null 2>&1; then \
-		shellcheck tools/*.sh tools/sre-auth/*.sh deploy/regional/examples/*.sh entrypoint.sh 2>/dev/null || true; \
+		shellcheck deploy/regional/examples/*.sh entrypoint.sh 2>/dev/null || true; \
 	else \
 		echo "shellcheck not installed, skipping shell linting"; \
 	fi

@@ -19,7 +19,8 @@ Designed for ephemeral SRE use with ECS Exec access as the `sre` user. The entry
 
 **IMPORTANT**: Always use Makefiles and Terraform for builds and deployments:
 - **Container builds**: Use `make` commands (never `podman build` directly)
-- **Lambda builds**: Use `make` commands in `lambda/*/` directories
+- **Go CLI builds**: Use `make build-cli`, `make test-cli`, etc. (root Makefile)
+- **Lambda builds**: Use root `make test-lambda-*` targets (only `create-investigation` has its own Makefile for bundling deps)
 - **Infrastructure**: Use `terraform` commands in `deploy/regional/`, or the `deploy/regional/Makefile` which wraps Terraform and sources `.env`
 
 ### Environment Configuration
@@ -49,6 +50,48 @@ make clean
 ```
 
 The `make manifest` target creates an OCI image index containing both architectures; Podman/Docker automatically selects the correct platform when pulling `rosa-boundary:latest`.
+
+## Go CLI
+
+The `rosa-boundary` Go CLI (`cmd/rosa-boundary/`) replaces the former shell scripts in `tools/`.
+
+### Build
+
+```bash
+make build-cli      # Build Go CLI to ./bin/rosa-boundary
+make install-cli    # Install CLI to /usr/local/bin
+make test-cli       # Run Go unit tests
+make fmt            # Format Go + shell code
+make lint           # Lint Go + shell code
+make staticcheck    # Static analysis
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `login` | Authenticate via Keycloak OIDC (PKCE browser flow), cache token |
+| `start-task` | Invoke Lambda to create an investigation task |
+| `join-task` | Connect to a running investigation via ECS Exec |
+| `list-tasks` | List running investigation tasks |
+| `stop-task` | Stop a running investigation task |
+| `configure` | Interactively write `~/.config/rosa-boundary/config.yaml` |
+| `version` | Print CLI version |
+
+### Configuration
+
+Configuration is resolved in priority order: flags > env vars > config file > defaults.
+
+- **Config file**: `~/.config/rosa-boundary/config.yaml` (XDG: `$XDG_CONFIG_HOME/rosa-boundary/config.yaml`)
+- **Env vars**: `ROSA_BOUNDARY_<KEY>` (e.g., `ROSA_BOUNDARY_LAMBDA_FUNCTION_NAME`); legacy un-prefixed names also accepted as fallback
+- **Cache**: `~/.cache/rosa-boundary/` (XDG: `$XDG_CACHE_HOME/rosa-boundary/`)
+
+### Key Design Notes
+
+- **Direct Lambda SDK invocation**: The CLI calls Lambda directly (no shell curl) to stay SCP-compliant
+- **Two-step role assumption**: Assumes the invoker role first, then the shared SRE ABAC role
+- **`join-task` process replacement**: `exec`s `session-manager-plugin` for a seamless terminal handoff
+- **Prerequisite**: `session-manager-plugin` must be installed and in `PATH`
 
 ## Testing Containers Locally
 
@@ -137,7 +180,16 @@ Architecture values are written to temp files (`/tmp/aws_cli_arch`, `/tmp/oc_suf
 rosa-boundary/
 ├── Containerfile              # Multi-arch container build
 ├── entrypoint.sh              # Runtime init: version selection, S3 sync, Bedrock setup
-├── Makefile                   # Build targets: all, build-amd64, build-arm64, manifest, clean
+├── Makefile                   # Build targets: container, CLI, tests, fmt, lint
+├── go.mod / go.sum            # Go module files
+├── cmd/rosa-boundary/         # Go CLI entry point (main.go)
+├── internal/
+│   ├── cmd/                   # Cobra subcommand implementations
+│   ├── auth/                  # OIDC PKCE flow and token caching
+│   ├── aws/                   # ECS, STS, and session-manager-plugin helpers
+│   ├── config/                # XDG config/cache paths, viper wiring
+│   ├── lambda/                # Lambda invocation client
+│   └── output/                # Terminal output helpers
 ├── skel/sre/.claude/          # Skeleton Claude Code config (CLAUDE.md, settings.json)
 ├── deploy/
 │   ├── keycloak/              # Kustomize config for Keycloak (RHBK) on OpenShift
@@ -147,29 +199,21 @@ rosa-boundary/
 │   │   └── overlays/dev/      # ExternalSecrets, ClusterSecretStore, ServiceAccount
 │   └── regional/              # Terraform for AWS Fargate deployment
 │       ├── Makefile           # Wraps terraform commands, sources .env
-│       ├── *.tf               # main, variables, outputs, s3, iam, efs, ecs, kms, oidc, lambda
+│       ├── *.tf               # main, variables, outputs, s3, iam, efs, ecs, kms, oidc, lambda-create-investigation, lambda-invoker, lambda-reap-tasks
 │       ├── examples/          # Manual lifecycle scripts (create, launch, join, stop, close)
 │       └── README.md          # Complete deployment documentation
 ├── lambda/
 │   ├── create-investigation/  # OIDC-authenticated investigation creation
-│   │   ├── handler.py         # validate_oidc_token, get_or_create_user_role, create_investigation_task
+│   │   ├── handler.py         # validate_oidc_token, create_investigation_task
 │   │   ├── test_handler.py    # moto-based unit tests
 │   │   └── Makefile           # Builds deps inside Lambda container
 │   └── reap-tasks/            # Periodic task timeout enforcement
 │       ├── handler.py         # lambda_handler, list_running_tasks
 │       └── test_handler.py    # unittest.mock-based unit tests
-├── tools/
-│   ├── create-investigation-lambda.sh  # End-to-end: OIDC → Lambda → assume role → wait for task
-│   ├── join-investigation.sh           # Connect to running investigation via ECS Exec
-│   ├── test-lambda-e2e.sh              # End-to-end Lambda test script
-│   └── sre-auth/                       # OIDC token + role assumption scripts
-│       ├── get-oidc-token.sh           # PKCE browser flow, caches token 4 min
-│       ├── assume-role.sh              # sts:AssumeRoleWithWebIdentity
-│       └── README.md                   # Detailed OIDC tool documentation
 ├── tests/localstack/
 │   ├── compose.yml            # LocalStack Pro + mock OIDC (local/macOS, local executor)
 │   ├── compose.ci.yml         # LocalStack Pro + mock OIDC (CI, Docker executor for Lambda)
-│   ├── integration/           # 29 tests across 9 test files
+│   ├── integration/           # 35 tests across 10 test files
 │   ├── oidc/mock_jwks.py      # Flask mock OIDC server
 │   └── README.md              # Full test documentation
 └── docs/
@@ -218,21 +262,23 @@ Each investigation gets:
 
 **EFS Access Point Limit**: 10,000 per filesystem.
 
-Two creation workflows: **Lambda-based** (recommended, OIDC-authenticated, `sre-team` group checked, per-user IAM roles scoped to `username` tag) via `tools/create-investigation-lambda.sh`, and **manual lifecycle scripts** via `deploy/regional/examples/`. See [`docs/runbooks/investigation-workflow.md`](docs/runbooks/investigation-workflow.md).
+Two creation workflows: **Lambda-based** (recommended, OIDC-authenticated, `sre-team` group checked) via `rosa-boundary start-task`, and **manual lifecycle scripts** via `deploy/regional/examples/`. See [`docs/runbooks/investigation-workflow.md`](docs/runbooks/investigation-workflow.md).
 
-**IAM Policy Created** (per-user role):
+**Shared ABAC SRE Role**: All SREs assume a single shared role (`sre_role_arn`). Access is scoped at runtime by ABAC conditions — the role can only exec into tasks whose `username` tag matches the caller's `aws:PrincipalTag/username` session tag (propagated from the Keycloak JWT via STS `TagSession`).
+
+**ABAC Policy on Shared Role**:
 ```python
 # ExecuteCommandOnCluster - Allow ecs:ExecuteCommand on cluster (no tag condition)
-# ExecuteCommandOnOwnedTasks - Allow ecs:ExecuteCommand on tasks with matching username tag
+# ExecuteCommandOnOwnedTasks - Allow ecs:ExecuteCommand on tasks where task tag username == PrincipalTag/username
 # DescribeAndListECS - Allow task describe/list operations
-# SSMSessionForECSExec - Allow ssm:StartSession with tag condition
+# SSMSessionForECSExec - Allow ssm:StartSession with matching tag condition
 # KMSForECSExec - Allow KMS operations for encrypted sessions
 ```
 
 **Tag-Based Authorization**:
 - Tasks tagged with `oidc_sub` (OIDC `sub` claim) and `username` (ABAC key)
-- Roles can only exec into tasks with matching `username` tag
-- Cross-user task access prevented at IAM policy level
+- Session tags from Keycloak JWT enforce `${aws:PrincipalTag/username}` ABAC conditions
+- Cross-user task access prevented at IAM policy level without per-user roles
 
 ## Keycloak on OpenShift
 
@@ -251,7 +297,7 @@ For realm and OIDC client configuration, see [`docs/configuration/keycloak-realm
 
 ## LocalStack Integration Testing
 
-29 integration tests in `tests/localstack/integration/` cover S3, IAM, Lambda, KMS, EFS, ECS, SSM, and CloudWatch Logs.
+35 integration tests in `tests/localstack/integration/` cover S3, IAM, Lambda, KMS, EFS, ECS, SSM, and CloudWatch Logs.
 
 ### Running Tests
 
