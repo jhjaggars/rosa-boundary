@@ -28,12 +28,13 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  init      - Initialize Terraform"
-	@echo "  plan      - Show Terraform execution plan"
-	@echo "  apply     - Apply Terraform changes"
-	@echo "  destroy   - Destroy all infrastructure"
-	@echo "  lambda    - Update Lambda function only"
-	@echo "  show-env  - Display environment variables from .env"
+	@echo "  init          - Initialize Terraform"
+	@echo "  plan          - Show Terraform execution plan"
+	@echo "  apply         - Build Lambda deps, then apply Terraform changes"
+	@echo "  destroy       - Destroy all infrastructure"
+	@echo "  build-lambda  - Build Lambda dependencies (required before apply)"
+	@echo "  lambda        - Update Lambda function only"
+	@echo "  show-env      - Display environment variables from .env"
 	@echo ""
 	@echo "Environment variables are sourced from $(ENV_FILE)"
 
@@ -59,8 +60,13 @@ plan:
 	export TF_VAR_keycloak_issuer_url="$$KEYCLOAK_ISSUER_URL" && \
 	terraform plan
 
+.PHONY: build-lambda
+build-lambda: ## Build Lambda dependencies (required before apply)
+	@echo "Building Lambda dependencies..."
+	@cd ../../lambda/create-investigation && make build
+
 .PHONY: apply
-apply:
+apply: build-lambda
 	@echo "Applying Terraform changes..."
 	@source $(ENV_FILE) && \
 	export TF_VAR_keycloak_issuer_url="$$KEYCLOAK_ISSUER_URL" && \
@@ -79,9 +85,7 @@ destroy:
 	fi
 
 .PHONY: lambda
-lambda:
-	@echo "Building Lambda package with dependencies..."
-	@cd ../../lambda/create-investigation && make build
+lambda: build-lambda  ## Update Lambda function only
 	@echo "Deploying Lambda function..."
 	@source $(ENV_FILE) && \
 	export TF_VAR_keycloak_issuer_url="$$KEYCLOAK_ISSUER_URL" && \

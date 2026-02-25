@@ -7,13 +7,13 @@ set -e
 TASK_FAMILY="${1}"
 
 if [ -z "$TASK_FAMILY" ]; then
-  echo "Usage: $0 <task-family-name>"
-  echo ""
-  echo "Example:"
-  echo "  $0 rosa-boundary-dev-rosa-prod-abc-INV-12345"
-  echo ""
-  echo "Get the task family name from create_investigation.sh output"
-  exit 1
+    echo "Usage: $0 <task-family-name>"
+    echo ""
+    echo "Example:"
+    echo "  $0 rosa-boundary-dev-rosa-prod-abc-INV-12345"
+    echo ""
+    echo "Get the task family name from create_investigation.sh output"
+    exit 1
 fi
 
 # AWS configuration
@@ -30,19 +30,19 @@ echo ""
 cd "$(dirname "$0")/.."
 
 CLUSTER_NAME=$(aws --profile "$PROFILE" --region "$REGION" ecs list-clusters \
-  --query 'clusterArns[?contains(@, `rosa-boundary`)]' --output text | awk -F'/' '{print $NF}')
+    --query 'clusterArns[?contains(@, `rosa-boundary`)]' --output text | awk -F'/' '{print $NF}')
 
 SECURITY_GROUP=$(aws --profile "$PROFILE" --region "$REGION" ec2 describe-security-groups \
-  --filters "Name=tag:Project,Values=rosa-boundary" "Name=tag:Stage,Values=dev" \
-  --query 'SecurityGroups[?contains(GroupName, `fargate`)].GroupId' --output text)
+    --filters "Name=tag:Project,Values=rosa-boundary" "Name=tag:Stage,Values=dev" \
+    --query 'SecurityGroups[?contains(GroupName, `fargate`)].GroupId' --output text)
 
 # Get EFS filesystem ID, then query mount targets for subnet IDs
 EFS_ID=$(aws --profile "$PROFILE" --region "$REGION" efs describe-file-systems \
-  --query 'FileSystems[?Tags[?Key==`Name` && contains(Value, `rosa-boundary-dev-sre-home`)]].FileSystemId' \
-  --output text)
+    --query 'FileSystems[?Tags[?Key==`Name` && contains(Value, `rosa-boundary-dev-sre-home`)]].FileSystemId' \
+    --output text)
 
 SUBNET_IDS=$(aws --profile "$PROFILE" --region "$REGION" efs describe-mount-targets \
-  --file-system-id "$EFS_ID" --query 'MountTargets[].SubnetId' --output text | tr '\t' ',')
+    --file-system-id "$EFS_ID" --query 'MountTargets[].SubnetId' --output text | tr '\t' ',')
 
 echo "Infrastructure:"
 echo "  ECS Cluster: $CLUSTER_NAME"
@@ -52,20 +52,20 @@ echo ""
 
 # Launch the Fargate task
 TASK_ARN=$(aws ecs run-task \
-  --profile "$PROFILE" \
-  --region "$REGION" \
-  --cluster "$CLUSTER_NAME" \
-  --task-definition "$TASK_FAMILY" \
-  --launch-type FARGATE \
-  --platform-version "1.4.0" \
-  --enable-execute-command \
-  --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}" \
-  --query 'tasks[0].taskArn' \
-  --output text)
+    --profile "$PROFILE" \
+    --region "$REGION" \
+    --cluster "$CLUSTER_NAME" \
+    --task-definition "$TASK_FAMILY" \
+    --launch-type FARGATE \
+    --platform-version "1.4.0" \
+    --enable-execute-command \
+    --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SECURITY_GROUP],assignPublicIp=ENABLED}" \
+    --query 'tasks[0].taskArn' \
+    --output text)
 
 if [ -z "$TASK_ARN" ]; then
-  echo "ERROR: Failed to launch task"
-  exit 1
+    echo "ERROR: Failed to launch task"
+    exit 1
 fi
 
 # Extract task ID from ARN
@@ -80,10 +80,10 @@ echo "Waiting for task to be running..."
 
 # Wait for task to reach RUNNING state
 aws ecs wait tasks-running \
-  --profile "$PROFILE" \
-  --region "$REGION" \
-  --cluster "$CLUSTER_NAME" \
-  --tasks "$TASK_ID"
+    --profile "$PROFILE" \
+    --region "$REGION" \
+    --cluster "$CLUSTER_NAME" \
+    --tasks "$TASK_ID"
 
 echo ""
 echo "✓ Task is now running!"
