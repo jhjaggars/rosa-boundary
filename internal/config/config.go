@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
 
 // Config holds all configuration values for the CLI.
 type Config struct {
-	LambdaURL          string `mapstructure:"lambda_url"`
 	LambdaFunctionName string `mapstructure:"lambda_function_name"`
 	KeycloakURL        string `mapstructure:"keycloak_url"`
 	KeycloakRealm      string `mapstructure:"keycloak_realm"`
@@ -19,6 +19,42 @@ type Config struct {
 	ClusterName        string `mapstructure:"cluster_name"`
 	SRERoleARN         string `mapstructure:"sre_role_arn"`
 	InvokerRoleARN     string `mapstructure:"invoker_role_arn"`
+}
+
+// ConfigDir returns the XDG config directory for rosa-boundary,
+// creating it if it does not exist.
+func ConfigDir() (string, error) {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		base = filepath.Join(home, ".config")
+	}
+	dir := filepath.Join(base, "rosa-boundary")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("cannot create config directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// CacheDir returns the XDG cache directory for rosa-boundary,
+// creating it if it does not exist.
+func CacheDir() (string, error) {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		base = filepath.Join(home, ".cache")
+	}
+	dir := filepath.Join(base, "rosa-boundary")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("cannot create cache directory %s: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // Load reads configuration from file, env vars, and applies defaults.
@@ -31,11 +67,10 @@ func Load() error {
 	viper.SetDefault("cluster_name", "rosa-boundary-dev")
 
 	// Config file
-	home, err := os.UserHomeDir()
+	configDir, err := ConfigDir()
 	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
+		return err
 	}
-	configDir := filepath.Join(home, ".rosa-boundary")
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(configDir)
@@ -50,7 +85,6 @@ func Load() error {
 	viper.AutomaticEnv()
 
 	// Legacy env var aliases (without prefix) for backward compat
-	bindEnvAlias("lambda_url", "LAMBDA_URL")
 	bindEnvAlias("lambda_function_name", "LAMBDA_FUNCTION_NAME")
 	bindEnvAlias("keycloak_url", "KEYCLOAK_URL")
 	bindEnvAlias("keycloak_realm", "KEYCLOAK_REALM")
@@ -82,16 +116,18 @@ func Get() (*Config, error) {
 	return &cfg, nil
 }
 
-// CacheDir returns the path to the rosa-boundary cache/config directory,
-// creating it if it does not exist.
-func CacheDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
+// WriteConfigFile writes ordered key-value pairs to a YAML config file.
+// Entries is a slice of [2]string{key, value} pairs written in order.
+// Empty values are omitted.
+func WriteConfigFile(path string, entries [][2]string) error {
+	var sb strings.Builder
+	for _, kv := range entries {
+		if kv[1] != "" {
+			fmt.Fprintf(&sb, "%s: %s\n", kv[0], kv[1])
+		}
 	}
-	dir := filepath.Join(home, ".rosa-boundary")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("cannot create cache directory %s: %w", dir, err)
+	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
+		return fmt.Errorf("cannot write config file: %w", err)
 	}
-	return dir, nil
+	return nil
 }

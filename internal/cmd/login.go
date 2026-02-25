@@ -29,7 +29,7 @@ func init() {
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
-	cfg, err := getConfig(false, true)
+	cfg, err := getConfig(true)
 	if err != nil {
 		return err
 	}

@@ -44,7 +44,7 @@ func runListTasks(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --output %q: must be text or json", listOutputFormat)
 	}
 
-	cfg, err := getConfig(false, false)
+	cfg, err := getConfig(false)
 	if err != nil {
 		return err
 	}

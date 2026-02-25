@@ -59,7 +59,7 @@ func runStartTask(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --output %q: must be text or json", startOutputFormat)
 	}
 
-	cfg, err := getConfig(false, true)
+	cfg, err := getConfig(true)
 	if err != nil {
 		return err
 	}

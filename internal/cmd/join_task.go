@@ -41,7 +41,7 @@ func init() {
 func runJoinTask(cmd *cobra.Command, args []string) error {
 	taskID := args[0]
 
-	cfg, err := getConfig(false, false)
+	cfg, err := getConfig(false)
 	if err != nil {
 		return err
 	}

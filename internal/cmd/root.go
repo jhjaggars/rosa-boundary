@@ -39,7 +39,6 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose/debug output")
-	rootCmd.PersistentFlags().String("lambda-url", "", "Lambda function URL")
 	rootCmd.PersistentFlags().String("keycloak-url", "", "Keycloak base URL")
 	rootCmd.PersistentFlags().String("realm", "", "Keycloak realm (default: sre-ops)")
 	rootCmd.PersistentFlags().String("client-id", "", "OIDC client ID (default: aws-sre-access)")
@@ -50,7 +49,6 @@ func init() {
 	rootCmd.PersistentFlags().String("lambda-function-name", "", "Lambda function name or ARN for direct invocation")
 
 	// Bind flags to viper keys
-	_ = viper.BindPFlag("lambda_url", rootCmd.PersistentFlags().Lookup("lambda-url"))
 	_ = viper.BindPFlag("keycloak_url", rootCmd.PersistentFlags().Lookup("keycloak-url"))
 	_ = viper.BindPFlag("keycloak_realm", rootCmd.PersistentFlags().Lookup("realm"))
 	_ = viper.BindPFlag("oidc_client_id", rootCmd.PersistentFlags().Lookup("client-id"))
@@ -68,15 +66,12 @@ func initConfig() {
 }
 
 // getConfig is a helper that loads and validates config, printing a useful error if required fields are missing.
-func getConfig(requireLambdaURL, requireKeycloakURL bool) (*config.Config, error) {
+func getConfig(requireKeycloakURL bool) (*config.Config, error) {
 	cfg, err := config.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	if requireLambdaURL && cfg.LambdaURL == "" {
-		return nil, fmt.Errorf("lambda URL is required; set --lambda-url, ROSA_BOUNDARY_LAMBDA_URL, or LAMBDA_URL")
-	}
 	if requireKeycloakURL && cfg.KeycloakURL == "" {
 		return nil, fmt.Errorf("keycloak URL is required; set --keycloak-url, ROSA_BOUNDARY_KEYCLOAK_URL, or KEYCLOAK_URL")
 	}
