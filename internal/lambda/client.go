@@ -16,6 +16,7 @@ type InvestigationRequest struct {
 	InvestigationID string `json:"investigation_id"`
 	OCVersion       string `json:"oc_version"`
 	TaskTimeout     int    `json:"task_timeout"`
+	SkipTask        bool   `json:"skip_task,omitempty"`
 }
 
 // InvestigationResponse is the JSON response from a successful Lambda invocation.
@@ -74,9 +75,8 @@ func New(functionName, region string, credentials aws.CredentialsProvider) *Clie
 	return &Client{functionName: functionName, sdk: sdk}
 }
 
-// CreateInvestigation invokes the Lambda function to create an investigation task.
-// The OIDC token is passed in the event headers so the handler can validate it.
-func (c *Client) CreateInvestigation(ctx context.Context, idToken string, req InvestigationRequest) (*InvestigationResponse, error) {
+// invoke sends the request to the Lambda function and returns the parsed response.
+func (c *Client) invoke(ctx context.Context, idToken string, req InvestigationRequest) (*InvestigationResponse, error) {
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal request: %w", err)
@@ -123,9 +123,32 @@ func (c *Client) CreateInvestigation(ctx context.Context, idToken string, req In
 		return nil, fmt.Errorf("cannot decode Lambda response body: %w", err)
 	}
 
+	return &result, nil
+}
+
+// CreateInvestigation invokes the Lambda function to create an investigation task.
+// The OIDC token is passed in the event headers so the handler can validate it.
+func (c *Client) CreateInvestigation(ctx context.Context, idToken string, req InvestigationRequest) (*InvestigationResponse, error) {
+	result, err := c.invoke(ctx, idToken, req)
+	if err != nil {
+		return nil, err
+	}
 	if result.TaskARN == "" {
 		return nil, fmt.Errorf("lambda response missing task_arn")
 	}
+	return result, nil
+}
 
-	return &result, nil
+// CreateInvestigationOnly invokes the Lambda with skip_task=true, creating only the EFS
+// access point without launching an ECS task.
+func (c *Client) CreateInvestigationOnly(ctx context.Context, idToken string, req InvestigationRequest) (*InvestigationResponse, error) {
+	req.SkipTask = true
+	result, err := c.invoke(ctx, idToken, req)
+	if err != nil {
+		return nil, err
+	}
+	if result.AccessPointID == "" {
+		return nil, fmt.Errorf("lambda response missing access_point_id")
+	}
+	return result, nil
 }

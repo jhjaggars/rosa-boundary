@@ -96,6 +96,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         cluster_id = body.get('cluster_id')
         oc_version = body.get('oc_version', '4.20')
         task_timeout = body.get('task_timeout', int(os.environ.get('TASK_TIMEOUT_DEFAULT', '3600')))
+        skip_task = body.get('skip_task', False)
 
         if not investigation_id or not cluster_id:
             logger.warning("Missing required fields: investigation_id or cluster_id")
@@ -151,7 +152,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"Using shared SRE role: {role_arn}")
 
         # Create investigation task
-        logger.info(f"Creating investigation task: {investigation_id} for cluster {cluster_id}")
+        logger.info(f"Creating investigation: {investigation_id} for cluster {cluster_id} (skip_task={skip_task})")
         task_info = create_investigation_task(
             cluster=ECS_CLUSTER,
             task_def=TASK_DEFINITION,
@@ -163,14 +164,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             security_group=SECURITY_GROUP,
             efs_filesystem_id=EFS_FILESYSTEM_ID,
             oc_version=oc_version,
-            task_timeout=task_timeout
+            task_timeout=task_timeout,
+            skip_task=skip_task
         )
 
-        logger.info(f"Investigation task created successfully: {task_info['taskArn']}")
+        if skip_task:
+            logger.info(f"Investigation created (no task launched): {task_info['accessPointId']}")
+            message = 'Investigation created (no task launched)'
+        else:
+            logger.info(f"Investigation task created successfully: {task_info['taskArn']}")
+            message = 'Investigation task created successfully'
 
         # Return success response
         return response(200, {
-            'message': 'Investigation task created successfully',
+            'message': message,
             'role_arn': role_arn,
             'task_arn': task_info['taskArn'],
             'access_point_id': task_info['accessPointId'],
@@ -270,6 +277,32 @@ def validate_oidc_token(token: str, keycloak_url: str, realm: str, client_id: st
         return None
 
 
+def find_existing_access_point(efs_filesystem_id: str, cluster_id: str, investigation_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Find an existing EFS access point by ClusterID and InvestigationID tags.
+
+    Args:
+        efs_filesystem_id: EFS filesystem ID to search
+        cluster_id: Cluster identifier to match
+        investigation_id: Investigation identifier to match
+
+    Returns:
+        Access point dict or None if not found
+    """
+    try:
+        paginator = efs.get_paginator('describe_access_points')
+        for page in paginator.paginate(FileSystemId=efs_filesystem_id):
+            for ap in page.get('AccessPoints', []):
+                if ap.get('LifeCycleState') != 'available':
+                    continue
+                tags = {t['Key']: t['Value'] for t in ap.get('Tags', [])}
+                if tags.get('ClusterID') == cluster_id and tags.get('InvestigationID') == investigation_id:
+                    return ap
+    except ClientError as e:
+        logger.warning(f"Failed to search for existing access points: {str(e)}")
+    return None
+
+
 def create_investigation_task(
     cluster: str,
     task_def: str,
@@ -281,7 +314,8 @@ def create_investigation_task(
     security_group: str,
     efs_filesystem_id: str,
     oc_version: str,
-    task_timeout: int = 3600
+    task_timeout: int = 3600,
+    skip_task: bool = False
 ) -> Dict[str, Any]:
     """
     Create EFS access point and launch ECS task for investigation.
@@ -302,41 +336,53 @@ def create_investigation_task(
     Returns:
         Dictionary with task ARN and access point ID
     """
-    # Create EFS access point for investigation
+    # Create EFS access point for investigation (idempotent: reuse if already exists)
     access_point_path = f"/{cluster_id}/{investigation_id}"
 
-    try:
-        logger.info(f"Creating EFS access point: {access_point_path}")
-        ap_response = efs.create_access_point(
-            FileSystemId=efs_filesystem_id,
-            PosixUser={
-                'Uid': 1000,  # sre user
-                'Gid': 1000
-            },
-            RootDirectory={
-                'Path': access_point_path,
-                'CreationInfo': {
-                    'OwnerUid': 1000,
-                    'OwnerGid': 1000,
-                    'Permissions': '0755'
-                }
-            },
-            Tags=[
-                {'Key': 'Name', 'Value': f"{cluster_id}-{investigation_id}"},
-                {'Key': 'ClusterID', 'Value': cluster_id},
-                {'Key': 'InvestigationID', 'Value': investigation_id},
-                {'Key': 'oidc_sub', 'Value': oidc_sub},
-                {'Key': 'username', 'Value': username},
-                {'Key': 'ManagedBy', 'Value': 'rosa-boundary-lambda'}
-            ]
-        )
+    existing_ap = find_existing_access_point(efs_filesystem_id, cluster_id, investigation_id)
+    if existing_ap:
+        access_point_id = existing_ap['AccessPointId']
+        logger.info(f"Reusing existing EFS access point: {access_point_id}")
+    else:
+        try:
+            logger.info(f"Creating EFS access point: {access_point_path}")
+            ap_response = efs.create_access_point(
+                FileSystemId=efs_filesystem_id,
+                PosixUser={
+                    'Uid': 1000,  # sre user
+                    'Gid': 1000
+                },
+                RootDirectory={
+                    'Path': access_point_path,
+                    'CreationInfo': {
+                        'OwnerUid': 1000,
+                        'OwnerGid': 1000,
+                        'Permissions': '0755'
+                    }
+                },
+                Tags=[
+                    {'Key': 'Name', 'Value': f"{cluster_id}-{investigation_id}"},
+                    {'Key': 'ClusterID', 'Value': cluster_id},
+                    {'Key': 'InvestigationID', 'Value': investigation_id},
+                    {'Key': 'oidc_sub', 'Value': oidc_sub},
+                    {'Key': 'username', 'Value': username},
+                    {'Key': 'ManagedBy', 'Value': 'rosa-boundary-lambda'}
+                ]
+            )
 
-        access_point_id = ap_response['AccessPointId']
-        logger.info(f"Created EFS access point: {access_point_id}")
+            access_point_id = ap_response['AccessPointId']
+            logger.info(f"Created EFS access point: {access_point_id}")
 
-    except ClientError as e:
-        logger.error(f"Failed to create EFS access point: {str(e)}")
-        raise
+        except ClientError as e:
+            logger.error(f"Failed to create EFS access point: {str(e)}")
+            raise
+
+    # When skip_task=True, return immediately without launching an ECS task
+    if skip_task:
+        return {
+            'taskArn': '',
+            'accessPointId': access_point_id
+        }
 
     # Prepare task environment variables
     environment = [

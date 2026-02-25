@@ -71,10 +71,12 @@ make staticcheck    # Static analysis
 | Command | Description |
 |---------|-------------|
 | `login` | Authenticate via Keycloak OIDC (PKCE browser flow), cache token |
-| `start-task` | Invoke Lambda to create an investigation task |
+| `create-investigation` | Create EFS access point only (no task); OIDC-authenticated via Lambda |
+| `start-task` | Invoke Lambda to create an investigation task (reuses existing access point if present) |
 | `join-task` | Connect to a running investigation via ECS Exec |
 | `list-tasks` | List running investigation tasks |
 | `stop-task` | Stop a running investigation task |
+| `close-investigation` | Stop tasks, deregister task defs, delete EFS access point |
 | `configure` | Interactively write `~/.config/rosa-boundary/config.yaml` |
 | `version` | Print CLI version |
 
@@ -85,6 +87,17 @@ Configuration is resolved in priority order: flags > env vars > config file > de
 - **Config file**: `~/.config/rosa-boundary/config.yaml` (XDG: `$XDG_CONFIG_HOME/rosa-boundary/config.yaml`)
 - **Env vars**: `ROSA_BOUNDARY_<KEY>` (e.g., `ROSA_BOUNDARY_LAMBDA_FUNCTION_NAME`); legacy un-prefixed names also accepted as fallback
 - **Cache**: `~/.cache/rosa-boundary/` (XDG: `$XDG_CACHE_HOME/rosa-boundary/`)
+
+Key config fields:
+
+| Field | Env var | Flag | Description |
+|-------|---------|------|-------------|
+| `lambda_function_name` | `ROSA_BOUNDARY_LAMBDA_FUNCTION_NAME` | `--lambda-function-name` | Lambda function name or ARN |
+| `invoker_role_arn` | `ROSA_BOUNDARY_INVOKER_ROLE_ARN` | `--invoker-role-arn` | Lambda invoker role ARN |
+| `sre_role_arn` | `ROSA_BOUNDARY_SRE_ROLE_ARN` | `--role-arn` | Shared SRE ABAC role ARN |
+| `efs_filesystem_id` | `ROSA_BOUNDARY_EFS_FILESYSTEM_ID` | `--efs-filesystem-id` | EFS filesystem ID (required for `close-investigation`) |
+| `cluster_name` | `ROSA_BOUNDARY_CLUSTER_NAME` | `--cluster` | ECS cluster name |
+| `aws_region` | `ROSA_BOUNDARY_AWS_REGION` | `--region` | AWS region |
 
 ### Key Design Notes
 

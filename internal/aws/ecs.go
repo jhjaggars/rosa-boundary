@@ -196,6 +196,49 @@ func (c *ECSClient) ExecuteCommand(ctx context.Context, taskID, container, comma
 	}, nil
 }
 
+// ListTaskDefinitionsByFamily returns all active task definition ARNs for a family prefix.
+func (c *ECSClient) ListTaskDefinitionsByFamily(ctx context.Context, familyPrefix string) ([]string, error) {
+	var arns []string
+	paginator := ecs.NewListTaskDefinitionsPaginator(c.client, &ecs.ListTaskDefinitionsInput{
+		FamilyPrefix: aws.String(familyPrefix),
+		Status:       types.TaskDefinitionStatusActive,
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("ListTaskDefinitions failed: %w", err)
+		}
+		arns = append(arns, page.TaskDefinitionArns...)
+	}
+	return arns, nil
+}
+
+// DeregisterTaskDefinition deregisters a task definition by ARN.
+func (c *ECSClient) DeregisterTaskDefinition(ctx context.Context, taskDefinitionARN string) error {
+	_, err := c.client.DeregisterTaskDefinition(ctx, &ecs.DeregisterTaskDefinitionInput{
+		TaskDefinition: aws.String(taskDefinitionARN),
+	})
+	if err != nil {
+		return fmt.Errorf("DeregisterTaskDefinition failed: %w", err)
+	}
+	return nil
+}
+
+// ListTasksByInvestigation returns running tasks tagged with the given investigation ID.
+func (c *ECSClient) ListTasksByInvestigation(ctx context.Context, investigationID string) ([]TaskSummary, error) {
+	tasks, err := c.ListRunningTasks(ctx, "RUNNING")
+	if err != nil {
+		return nil, err
+	}
+	var filtered []TaskSummary
+	for _, t := range tasks {
+		if t.Tags["investigation_id"] == investigationID {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered, nil
+}
+
 // taskToSummary converts an ECS task to a TaskSummary.
 func taskToSummary(t types.Task, clusterName string) *TaskSummary {
 	taskID := path.Base(aws.ToString(t.TaskArn))

@@ -19,6 +19,7 @@ type Config struct {
 	ClusterName        string `mapstructure:"cluster_name"`
 	SRERoleARN         string `mapstructure:"sre_role_arn"`
 	InvokerRoleARN     string `mapstructure:"invoker_role_arn"`
+	EFSFilesystemID    string `mapstructure:"efs_filesystem_id"`
 }
 
 // ConfigDir returns the XDG config directory for rosa-boundary,
@@ -92,6 +93,7 @@ func Load() error {
 	bindEnvAlias("aws_region", "AWS_REGION")
 	bindEnvAlias("sre_role_arn", "SRE_ROLE_ARN")
 	bindEnvAlias("invoker_role_arn", "INVOKER_ROLE_ARN")
+	bindEnvAlias("efs_filesystem_id", "EFS_FILESYSTEM_ID")
 
 	return nil
 }

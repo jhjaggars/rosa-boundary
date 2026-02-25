@@ -605,5 +605,181 @@ class TestResponseHelper:
         assert result['headers']['Content-Type'] == 'application/json'
 
 
+class TestSkipTask:
+    """Test skip_task parameter and idempotent access point creation."""
+
+    ENV_VARS = {
+        'KEYCLOAK_URL': 'https://keycloak.test',
+        'KEYCLOAK_REALM': 'test-realm',
+        'KEYCLOAK_CLIENT_ID': 'test-client',
+        'OIDC_PROVIDER_ARN': 'arn:aws:iam::123:oidc-provider/test',
+        'ECS_CLUSTER': 'test-cluster',
+        'TASK_DEFINITION': 'test-task',
+        'SUBNETS': 'subnet-1,subnet-2',
+        'SECURITY_GROUP': 'sg-123',
+        'EFS_FILESYSTEM_ID': 'fs-123',
+        'SHARED_ROLE_ARN': 'arn:aws:iam::123:role/test-sre-shared',
+        'REQUIRED_GROUP': 'sre-team'
+    }
+
+    def _make_event(self, extra_body=None):
+        body = {'cluster_id': 'test-cluster', 'investigation_id': 'test-inv'}
+        if extra_body:
+            body.update(extra_body)
+        return {
+            'headers': {'authorization': 'Bearer valid-token'},
+            'body': json.dumps(body)
+        }
+
+    def _mock_claims(self):
+        return {
+            'sub': 'user-123',
+            'email': 'sre@example.com',
+            'preferred_username': 'sre-user',
+            'groups': ['sre-team']
+        }
+
+    @patch.dict('os.environ', ENV_VARS)
+    def test_skip_task_default_false(self):
+        """Test that skip_task defaults to False (backward compat)."""
+        import importlib
+        importlib.reload(handler)
+
+        event = self._make_event()
+        context = Mock()
+
+        mock_ap = {'AccessPointId': 'fsap-new'}
+        mock_task = {'tasks': [{'taskArn': 'arn:aws:ecs:us-east-1:123:task/abc123'}], 'failures': []}
+
+        with patch('handler.validate_oidc_token', return_value=self._mock_claims()):
+            with patch('handler.find_existing_access_point', return_value=None):
+                with patch('handler.efs') as mock_efs:
+                    with patch('handler.ecs') as mock_ecs:
+                        mock_efs.create_access_point.return_value = mock_ap
+                        mock_ecs.run_task.return_value = mock_task
+                        mock_ecs.tag_resource.return_value = {}
+
+                        response = handler.lambda_handler(event, context)
+
+        assert response['statusCode'] == 200
+        body = json.loads(response['body'])
+        assert body['message'] == 'Investigation task created successfully'
+        assert body['task_arn'] != ''
+
+    @patch.dict('os.environ', ENV_VARS)
+    def test_skip_task_creates_access_point_only(self):
+        """Test that skip_task=True creates EFS access point without launching ECS task."""
+        import importlib
+        importlib.reload(handler)
+
+        event = self._make_event({'skip_task': True})
+        context = Mock()
+
+        mock_ap = {'AccessPointId': 'fsap-new'}
+
+        with patch('handler.validate_oidc_token', return_value=self._mock_claims()):
+            with patch('handler.find_existing_access_point', return_value=None):
+                with patch('handler.efs') as mock_efs:
+                    with patch('handler.ecs') as mock_ecs:
+                        mock_efs.create_access_point.return_value = mock_ap
+
+                        response = handler.lambda_handler(event, context)
+
+                        # ECS task should NOT be launched
+                        mock_ecs.run_task.assert_not_called()
+
+        assert response['statusCode'] == 200
+        body = json.loads(response['body'])
+        assert body['message'] == 'Investigation created (no task launched)'
+        assert body['access_point_id'] == 'fsap-new'
+        assert body['task_arn'] == ''
+
+    @patch.dict('os.environ', ENV_VARS)
+    def test_idempotent_access_point_reuse(self):
+        """Test that existing access point is reused instead of creating a new one."""
+        import importlib
+        importlib.reload(handler)
+
+        event = self._make_event({'skip_task': True})
+        context = Mock()
+
+        existing_ap = {'AccessPointId': 'fsap-existing', 'LifeCycleState': 'available'}
+
+        with patch('handler.validate_oidc_token', return_value=self._mock_claims()):
+            with patch('handler.find_existing_access_point', return_value=existing_ap):
+                with patch('handler.efs') as mock_efs:
+                    with patch('handler.ecs') as mock_ecs:
+                        response = handler.lambda_handler(event, context)
+
+                        # EFS create should NOT be called when AP already exists
+                        mock_efs.create_access_point.assert_not_called()
+                        mock_ecs.run_task.assert_not_called()
+
+        assert response['statusCode'] == 200
+        body = json.loads(response['body'])
+        assert body['access_point_id'] == 'fsap-existing'
+
+    def test_find_existing_access_point_returns_none_when_not_found(self):
+        """Test find_existing_access_point returns None when no matching AP exists."""
+        with patch('handler.efs') as mock_efs:
+            mock_efs.get_paginator.return_value.paginate.return_value = [
+                {'AccessPoints': [
+                    {
+                        'AccessPointId': 'fsap-other',
+                        'LifeCycleState': 'available',
+                        'Tags': [
+                            {'Key': 'ClusterID', 'Value': 'other-cluster'},
+                            {'Key': 'InvestigationID', 'Value': 'other-inv'}
+                        ]
+                    }
+                ]}
+            ]
+
+            result = handler.find_existing_access_point('fs-123', 'test-cluster', 'test-inv')
+
+        assert result is None
+
+    def test_find_existing_access_point_returns_match(self):
+        """Test find_existing_access_point returns matching access point."""
+        expected_ap = {
+            'AccessPointId': 'fsap-match',
+            'LifeCycleState': 'available',
+            'Tags': [
+                {'Key': 'ClusterID', 'Value': 'test-cluster'},
+                {'Key': 'InvestigationID', 'Value': 'test-inv'}
+            ]
+        }
+
+        with patch('handler.efs') as mock_efs:
+            mock_efs.get_paginator.return_value.paginate.return_value = [
+                {'AccessPoints': [expected_ap]}
+            ]
+
+            result = handler.find_existing_access_point('fs-123', 'test-cluster', 'test-inv')
+
+        assert result is not None
+        assert result['AccessPointId'] == 'fsap-match'
+
+    def test_find_existing_access_point_skips_non_available(self):
+        """Test that access points not in 'available' state are skipped."""
+        with patch('handler.efs') as mock_efs:
+            mock_efs.get_paginator.return_value.paginate.return_value = [
+                {'AccessPoints': [
+                    {
+                        'AccessPointId': 'fsap-deleting',
+                        'LifeCycleState': 'deleting',
+                        'Tags': [
+                            {'Key': 'ClusterID', 'Value': 'test-cluster'},
+                            {'Key': 'InvestigationID', 'Value': 'test-inv'}
+                        ]
+                    }
+                ]}
+            ]
+
+            result = handler.find_existing_access_point('fs-123', 'test-cluster', 'test-inv')
+
+        assert result is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

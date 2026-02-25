@@ -64,6 +64,7 @@ func runConfigure(cmd *cobra.Command, args []string) error {
 	sreRoleARN := prompt("SRE role ARN", cfg.SRERoleARN, "")
 	awsRegion := prompt("AWS region", cfg.AWSRegion, "us-east-2")
 	clusterName := prompt("Cluster name", cfg.ClusterName, "rosa-boundary-dev")
+	efsFilesystemID := prompt("EFS filesystem ID", cfg.EFSFilesystemID, "")
 
 	configDir, err := config.ConfigDir()
 	if err != nil {
@@ -80,6 +81,7 @@ func runConfigure(cmd *cobra.Command, args []string) error {
 		{"sre_role_arn", sreRoleARN},
 		{"aws_region", awsRegion},
 		{"cluster_name", clusterName},
+		{"efs_filesystem_id", efsFilesystemID},
 	}
 
 	if err := config.WriteConfigFile(configPath, entries); err != nil {
